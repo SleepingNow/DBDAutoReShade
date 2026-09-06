@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "version": 1,
+  "realms": [
+    {
+      "name": "Autohaven Wreckers",
+      "maps": [
+        "Azarov's Resting Place",
+        "Blood Lodge",
+        "Gas Heaven",
+        "Wreckers' Yard",
+        "Wretched Shop"
+      ]
+    },
+    {
+      "name": "Backwater Swamp",
+      "maps": [
+        "Grim Pantry",
+        "The Pale Rose"
+      ]
+    },
+    {
+      "name": "Coldwind Farm",
+      "maps": [
+        "Fractured Cowshed",
+        "Rancid Abattoir",
+        "Rotten Fields",
+        "The Thompson House",
+        "Torment Creek"
+      ]
+    },
+    {
+      "name": "Crotus Prenn Asylum",
+      "maps": [
+        "Disturbed Ward",
+        "Father Campbell's Chapel"
+      ]
+    },
+    {
+      "name": "Dvarka Deepwood",
+      "maps": [
+        "Nostromo Wreckage",
+        "Toba Landing"
+      ]
+    },
+    {
+      "name": "Forsaken Boneyard",
+      "maps": [
+        "Dead Sands",
+        "Eyrie of Crows"
+      ]
+    },
+    {
+      "name": "Gideon Meat Plant",
+      "maps": [
+        "The Game"
+      ]
+    },
+    {
+      "name": "Grave of Glenvale",
+      "maps": [
+        "Dead Dawg Saloon"
+      ]
+    },
+    {
+      "name": "Haddonfield",
+      "maps": [
+        "Lampkin Lane"
+      ]
+    },
+    {
+      "name": "Hawkins National Laboratory",
+      "maps": [
+        "The Underground Complex"
+      ]
+    },
+    {
+      "name": "Léry's Memorial Institute",
+      "maps": [
+        "Treatment Theatre"
+      ]
+    },
+    {
+      "name": "MacMillan Estate",
+      "maps": [
+        "Coal Tower",
+        "Groaning Storehouse",
+        "Ironworks of Misery",
+        "Shelter Woods",
+        "Suffocation Pit"
+      ]
+    },
+    {
+      "name": "Ormond",
+      "maps": [
+        "Mount Ormond Resort",
+        "Ormond Lake Mine"
+      ]
+    },
+    {
+      "name": "Raccoon City",
+      "maps": [
+        "Raccoon City Police Station East Wing",
+        "Raccoon City Police Station West Wing"
+      ]
+    },
+    {
+      "name": "Red Forest",
+      "maps": [
+        "Mother's Dwelling",
+        "The Temple of Purgation"
+      ]
+    },
+    {
+      "name": "Silent Hill",
+      "maps": [
+        "Midwich Elementary School"
+      ]
+    },
+    {
+      "name": "Springwood",
+      "maps": [
+        "Badham Preschool"
+      ]
+    },
+    {
+      "name": "The Decimated Borgo",
+      "maps": [
+        "Forgotten Ruins",
+        "The Shattered Square"
+      ]
+    },
+    {
+      "name": "Withered Isle",
+      "maps": [
+        "Fallen Refuge",
+        "Freddy Fazbear's Pizza",
+        "Garden of Joy",
+        "Greenville Square"
+      ]
+    },
+    {
+      "name": "Yamaoka Estate",
+      "maps": [
+        "Family Residence",
+        "Sanctum of Wrath"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+<Window x:Class="DBDAutoReShade.App.SetupWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DBD Auto ReShade — First-Run Setup" Height="470" Width="540"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="16">
+            <TextBlock Text="Welcome to DBD Auto ReShade" FontSize="18" FontWeight="Bold" Margin="0,0,0,4" />
+            <TextBlock Text="A few quick steps. Realm presets are optional — unconfigured realms simply use Global."
+                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+            <GroupBox Header="1 — Dead by Daylight">
+                <StackPanel>
+                    <TextBlock Text="{Binding DbdPath}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <Button Content="Browse" Command="{Binding BrowseDbdCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="2 — ReShade">
+                <StackPanel>
+                    <TextBlock Text="{Binding ReshadePath}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                    <Button Content="Browse" Command="{Binding BrowseReshadeCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="3 — Global / Menu Preset">
+                <StackPanel>
+                    <TextBlock Text="{Binding GlobalPresetName}" Margin="0,0,0,6" />
+                    <Button Content="Select" Command="{Binding ChangeGlobalCommand}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="4 — Detection Hotkey">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding HotkeyText}" VerticalAlignment="Center" Width="140" FontWeight="Bold" />
+                    <Button Content="Change" Command="{Binding BeginHotkeyCaptureCommand}" />
+                </StackPanel>
+            </GroupBox>
+            <TextBlock Text="Press a key (F1–F24, A–Z, 0–9; modifiers allowed)…"
+                       Style="{StaticResource MutedText}" Margin="0,0,0,8"
+                       Visibility="{Binding HotkeyCaptureMode, Converter={StaticResource BoolToVisibility}}" />
+
+            <GroupBox Header="5 — Realm Presets (optional)">
+                <TextBlock Text="Assign per-realm presets later under the Presets tab. Press the detection hotkey on the loading screen and the app reads the map name itself — no screenshots or templates needed."
+                           Style="{StaticResource MutedText}" TextWrapping="Wrap" />
+            </GroupBox>
+
+            <Button Content="Finish" Click="OnFinish" HorizontalAlignment="Right"
+                    Padding="24,6" Margin="0,8,0,0" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DBDAutoReShade.App/DBDAutoReShade.App.csproj" />
+    <Project Path="src/DBDAutoReShade.Core/DBDAutoReShade.Core.csproj" />
+    <Project Path="src/DBDAutoReShade.Desktop/DBDAutoReShade.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DBDAutoReShade.Tests/DBDAutoReShade.Tests.csproj" />
+  </Folder>
+</Solution>
