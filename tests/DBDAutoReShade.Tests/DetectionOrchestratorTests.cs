@@ -185,16 +185,28 @@ public sealed class DetectionOrchestratorTests : IDisposable
             new DetectionPolicy(TimeoutSeconds: 1, SampleIntervalMs: 50),
             _ => FakeBounds);
 
+        int samples = 0;
+        orchestrator.SampleTaken += (_, _) => Interlocked.Increment(ref samples);
         using var cts = new CancellationTokenSource();
         Task<DetectionResult> run = orchestrator.DetectAsync(new IntPtr(1234), continuous: true, ct: cts.Token);
         await Task.Delay(1600); // well past the 1 s single-shot timeout
         Assert.True(orchestrator.IsDetecting); // still scanning: no timeout in toggle mode
+
+        // Count real samples rather than assuming a throughput: a loaded test host can
+        // starve the loop, but it must keep sampling after the old timeout.
+        int atTimeout = Volatile.Read(ref samples);
+        for (int i = 0; i < 100 && Volatile.Read(ref samples) < atTimeout + 3; i++)
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.True(Volatile.Read(ref samples) >= atTimeout + 3); // kept sampling past the timeout
         cts.Cancel();
         DetectionResult r = await run;
 
         Assert.False(r.Success);
         Assert.True(r.WasStopped);
-        Assert.True(r.SampleCount >= 10); // kept sampling the whole time
+        Assert.True(r.SampleCount >= atTimeout + 3);
         Assert.False(orchestrator.IsDetecting);
     }
 

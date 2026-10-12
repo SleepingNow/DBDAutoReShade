@@ -1,0 +1,226 @@
+<UserControl x:Class="DBDAutoReShade.App.Controls.CampfireScene"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options"
+             IsHitTestVisible="False"
+             Focusable="False">
+    <!--
+        The campfire clearing (Global / Menu, and the Status plate with no map), ported from the Campfire prototype's
+        campfireArt(): a 400 x 200 vector scene drawn UniformToFill (SVG preserveAspectRatio "xMidYMid slice").
+        The treeline, the dead tree and the Entity standing in the far fog are the prototype's generated path data
+        (dumped with headless Chromium). Everything around the fire is drawn relative to the fire (FireX), so the
+        scene can put the fire anywhere (the Status plate uses 304, the Global row 200, the Presets hero 292).
+        Layers that differ between the fire states are separate (cold / warm pit, lit glow / ember glow), so every
+        change between Out, Embers and Burning is an in-place crossfade plus the fire's own motion.
+    -->
+    <UserControl.Resources>
+        <RadialGradientBrush x:Key="SceneMist" po:Freeze="True" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+            <GradientStop Offset="0" Color="#944A5C63"/>
+            <GradientStop Offset="1" Color="#004A5C63"/>
+        </RadialGradientBrush>
+        <RadialGradientBrush x:Key="SceneFireLight" po:Freeze="True" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+            <GradientStop Offset="0" Color="#8CF08A3C"/>
+            <GradientStop Offset="1" Color="#00F08A3C"/>
+        </RadialGradientBrush>
+    </UserControl.Resources>
+    <Grid x:Name="Root" ClipToBounds="True">
+        <!-- centred: an oversized UniformToFill box crops both sides evenly (SVG xMidYMid slice) -->
+        <Viewbox Stretch="UniformToFill" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Canvas Width="400" Height="200">
+                <!-- sky -->
+                <Path Data="M0,0 H400 V200 H0 Z">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0" Color="#18272D"/>
+                            <GradientStop Offset="1" Color="#0C1316"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <Path Opacity="0.7" Fill="{StaticResource SceneMist}"><Path.Data><EllipseGeometry Center="220,96" RadiusX="210" RadiusY="70"/></Path.Data></Path>
+                <!-- the Entity, standing in the far fog beyond the treeline -->
+                <Canvas Opacity="0.75">
+                    <Path Fill="#0E191D" Data="F1 M176.6 -29.2L177.4 -26.4L178.3 -23.7L179.6 -21.3L180.9 -18.8L182.2 -16.3L183.5 -13.8L184.8 -11.4L186.1 -8.9L187.4 -6.4L188.7 -4.0L189.9 -1.5L191.2 1.0L192.5 3.5L193.8 6.0L195.1 8.4L196.3 10.9L197.6 13.4L198.8 15.9L200.0 18.4L201.3 21.0L202.4 23.5L203.6 26.0L204.8 28.6L205.9 31.1L207.0 33.7L208.1 36.3L209.2 38.8L210.3 41.4L211.6 43.9L212.9 46.4L215.1 45.6L214.3 42.9L213.6 40.1L212.6 37.5L211.5 34.9L210.5 32.3L209.4 29.6L208.3 27.0L207.3 24.4L206.2 21.8L205.2 19.2L204.1 16.6L203.0 14.0L201.9 11.4L200.8 8.9L199.6 6.3L198.5 3.7L197.3 1.1L196.2 -1.4L195.0 -4.0L193.8 -6.5L192.5 -9.1L191.3 -11.6L190.0 -14.1L188.7 -16.6L187.3 -19.1L186.0 -21.5L184.6 -24.0L183.2 -26.5L181.4 -28.7L179.4 -30.8Z"/>
+                    <Path Fill="#0E191D" Data="F1 M213.1 45.8L212.0 49.5L211.0 53.3L210.3 57.1L209.6 60.8L208.9 64.6L208.3 68.4L207.6 72.2L207.0 76.0L206.4 79.8L205.8 83.6L205.2 87.4L204.6 91.3L204.1 95.1L203.6 98.9L203.0 102.7L202.5 106.5L202.0 110.3L201.5 114.1L201.0 118.0L200.5 121.8L200.1 125.6L199.6 129.4L199.1 133.2L198.7 137.1L198.2 140.9L197.7 144.7L197.3 148.5L196.8 152.3L196.4 156.2L196.0 160.0L196.0 160.0L196.5 156.2L197.1 152.4L197.6 148.6L198.2 144.8L198.7 140.9L199.3 137.1L199.9 133.3L200.5 129.5L201.1 125.7L201.7 121.9L202.3 118.2L203.0 114.4L203.7 110.6L204.3 106.8L205.0 103.0L205.7 99.2L206.4 95.4L207.1 91.7L207.8 87.9L208.5 84.1L209.2 80.3L209.9 76.5L210.6 72.8L211.3 69.0L212.0 65.2L212.7 61.4L213.4 57.6L214.1 53.9L214.6 50.0L214.9 46.2Z"/>
+                    <Path Fill="#0E191D" Data="F1 M218.3 45.4L214.4 48.9L212.3 46.2L213.6 43.1Z"/>
+                    <Path Fill="#0E191D" Data="F1 M260.6 -30.5L259.0 -28.0L257.6 -25.5L256.6 -22.8L255.6 -20.2L254.6 -17.5L253.7 -14.7L252.8 -12.0L251.9 -9.3L251.0 -6.6L250.2 -3.8L249.4 -1.1L248.6 1.6L247.8 4.4L247.0 7.2L246.3 9.9L245.6 12.7L244.9 15.5L244.2 18.2L243.5 21.0L242.8 23.8L242.1 26.6L241.5 29.3L240.8 32.1L240.2 34.9L239.5 37.7L238.9 40.5L238.2 43.3L237.6 46.1L237.3 48.9L236.9 51.8L239.1 52.2L239.9 49.5L240.8 46.8L241.5 44.0L242.2 41.3L242.9 38.5L243.6 35.8L244.3 33.0L245.1 30.3L245.9 27.5L246.6 24.8L247.5 22.1L248.3 19.4L249.1 16.7L250.0 13.9L250.8 11.2L251.7 8.5L252.6 5.8L253.5 3.1L254.4 0.5L255.3 -2.2L256.2 -4.9L257.1 -7.6L258.0 -10.3L258.9 -13.0L259.8 -15.7L260.7 -18.4L261.6 -21.1L262.5 -23.8L263.0 -26.6L263.4 -29.5Z"/>
+                    <Path Fill="#0E191D" Data="F1 M237.1 52.1L237.4 55.8L237.7 59.4L238.3 63.0L238.9 66.6L239.4 70.2L240.0 73.7L240.6 77.3L241.2 80.9L241.7 84.5L242.3 88.1L242.9 91.6L243.4 95.2L244.0 98.8L244.5 102.4L245.1 106.0L245.6 109.6L246.1 113.2L246.7 116.8L247.2 120.4L247.7 124.0L248.2 127.5L248.6 131.1L249.1 134.7L249.5 138.3L250.0 142.0L250.4 145.6L250.8 149.2L251.2 152.8L251.6 156.4L252.0 160.0L252.0 160.0L251.7 156.4L251.4 152.8L251.1 149.1L250.8 145.5L250.5 141.9L250.1 138.3L249.8 134.7L249.5 131.1L249.1 127.4L248.8 123.8L248.4 120.2L248.1 116.6L247.7 113.0L247.3 109.4L246.9 105.8L246.5 102.1L246.1 98.5L245.7 94.9L245.3 91.3L244.8 87.7L244.3 84.1L243.9 80.5L243.4 76.9L242.9 73.3L242.3 69.7L241.8 66.1L241.2 62.5L240.7 58.9L239.8 55.4L238.9 51.9Z"/>
+                    <Path Fill="#0E191D" Data="F1 M233.8 51.7L238.2 49.2L239.7 52.1L237.8 54.8Z"/>
+                    <Path Fill="#0E191D" Data="F1 M225.3 -29.1L227.3 -26.9L229.3 -24.7L231.6 -22.9L233.8 -21.0L236.0 -19.1L238.3 -17.3L240.5 -15.4L242.7 -13.5L244.9 -11.6L247.1 -9.7L249.3 -7.8L251.5 -5.9L253.7 -4.0L255.9 -2.0L258.1 -0.1L260.2 1.9L262.4 3.9L264.5 5.8L266.6 7.8L268.7 9.8L270.8 11.9L272.9 13.9L275.0 16.0L277.0 18.1L279.1 20.2L281.1 22.3L283.1 24.4L285.1 26.5L287.2 28.6L289.3 30.6L290.7 29.4L288.9 27.1L287.1 24.7L285.1 22.5L283.1 20.4L281.1 18.2L279.1 16.1L277.1 13.9L275.1 11.8L273.1 9.7L271.0 7.6L269.0 5.5L266.9 3.4L264.8 1.3L262.8 -0.8L260.7 -2.8L258.6 -4.9L256.4 -6.9L254.3 -8.9L252.1 -10.9L250.0 -12.9L247.8 -14.9L245.6 -16.8L243.3 -18.7L241.1 -20.6L238.8 -22.5L236.5 -24.3L234.2 -26.2L231.9 -28.0L229.4 -29.5L226.7 -30.9Z"/>
+                    <Path Fill="#0E191D" Data="F1 M289.3 30.0L289.2 34.1L289.1 38.1L289.3 42.1L289.5 46.1L289.7 50.1L289.9 54.1L290.1 58.2L290.4 62.2L290.7 66.2L291.0 70.2L291.3 74.2L291.6 78.2L292.0 82.2L292.4 86.2L292.8 90.2L293.2 94.2L293.6 98.2L294.0 102.2L294.4 106.2L294.9 110.2L295.4 114.1L295.8 118.1L296.3 122.1L296.8 126.1L297.3 130.1L297.8 134.1L298.3 138.1L298.9 142.0L299.4 146.0L300.0 150.0L300.0 150.0L299.5 146.0L299.0 142.0L298.6 138.0L298.1 134.0L297.7 130.0L297.3 126.1L296.9 122.1L296.5 118.1L296.1 114.1L295.8 110.1L295.4 106.1L295.1 102.1L294.8 98.1L294.5 94.1L294.3 90.1L294.0 86.1L293.7 82.1L293.5 78.1L293.2 74.0L293.0 70.0L292.8 66.0L292.6 62.0L292.4 58.0L292.2 54.0L292.0 50.0L291.8 46.0L291.7 42.0L291.5 38.0L291.1 34.0L290.7 30.0Z"/>
+                    <Path Fill="#0E191D" Data="F1 M293.3 28.4L291.0 32.2L288.7 30.6L289.0 27.8Z"/>
+                </Canvas>
+                <Path Fill="{StaticResource SceneMist}"><Path.Data><EllipseGeometry Center="230,138" RadiusX="260" RadiusY="42"/></Path.Data></Path>
+                <!-- far treeline -->
+                <Canvas>
+                    <Path Fill="#1C2A30" Data="F1 M10.0 66.0L12.1 80.8L10.9 77.4L14.2 95.0L11.7 89.9L15.8 108.7L12.5 102.5L18.2 122.1L13.5 115.1L18.5 135.1L14.0 127.7L23.6 146.9L15.5 140.2L27.9 160.0L16.8 152.8L15.1 156.0L15.1 166L12.9 166L12.9 156.0L12.6 152.8L6.8 160.9L11.5 140.2L3.8 147.1L11.6 127.7L6.4 134.7L10.9 115.1L5.4 121.0L10.9 102.5L7.9 107.3L10.5 89.9L7.9 95.0L10.3 77.4L9.2 82.8Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M46.1 44.0L46.8 60.3L46.1 54.9L47.7 73.0L46.1 67.0L51.1 85.0L46.5 79.2L53.0 96.2L46.7 91.3L54.7 110.8L46.9 103.4L53.0 122.5L46.4 115.5L58.1 134.4L47.2 127.7L51.6 148.4L45.7 139.8L58.9 160.8L47.0 151.9L45.1 155.6L45.1 168L42.9 168L42.9 155.6L41.4 151.9L30.8 159.7L41.6 139.8L31.1 147.4L41.9 127.7L31.7 135.7L43.3 115.5L37.5 121.0L43.2 103.4L36.4 110.3L44.2 91.3L40.3 97.8L44.8 79.2L42.6 85.2L45.0 67.0L42.5 71.4L45.6 54.9L44.5 59.4Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M91.1 74.0L92.8 89.7L91.1 84.4L92.6 99.9L90.7 95.9L93.0 113.3L90.4 107.5L95.2 125.0L90.5 119.1L96.8 138.5L90.5 130.6L100.7 150.3L90.9 142.2L97.5 162.1L89.9 153.8L89.1 156.8L89.1 166L86.9 166L86.9 156.8L85.3 153.8L74.7 161.7L86.0 142.2L76.1 149.7L87.3 130.6L81.1 136.4L88.5 119.1L85.1 124.5L89.0 107.5L85.8 112.9L89.8 95.9L88.3 101.8L90.4 84.4L89.3 88.9Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M126.8 85.0L128.5 101.3L127.3 95.5L131.0 111.7L127.9 107.3L132.4 125.8L128.4 119.0L135.1 137.4L129.1 130.7L132.9 150.7L128.8 142.5L138.4 163.1L130.1 154.2L129.1 157.0L129.1 165L126.9 165L126.9 157.0L126.5 154.2L120.3 162.0L126.0 142.5L118.9 149.2L126.4 130.7L121.8 136.7L126.6 119.0L123.7 124.6L126.7 107.3L125.0 113.7L126.7 95.5L125.8 100.3Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M155.8 63.0L157.4 79.5L156.6 74.9L160.7 93.4L157.8 87.9L162.1 105.9L158.5 101.0L164.2 119.7L159.4 114.1L167.0 133.5L160.5 127.2L168.5 147.9L161.2 140.2L170.5 160.6L162.1 153.3L161.1 156.6L161.1 167L158.9 167L158.9 156.6L157.8 153.3L149.0 162.0L158.1 140.2L153.0 148.4L157.4 127.2L151.5 134.0L157.2 114.1L153.4 120.3L156.6 101.0L152.3 107.1L156.5 87.9L154.4 94.3L156.2 74.9L155.5 78.9Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M195.3 92.0L196.5 108.3L195.6 103.8L198.7 122.1L196.2 116.8L201.6 136.8L196.9 129.9L201.1 149.6L196.9 142.9L205.0 163.7L197.8 155.9L197.1 158.6L197.1 166L194.9 166L194.9 158.6L194.4 155.9L187.8 163.9L194.8 142.9L190.8 151.1L194.5 129.9L189.8 135.6L194.7 116.8L191.4 121.6L195.1 103.8L193.7 107.8Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M261.6 78.0L263.6 95.0L262.0 89.7L263.8 107.9L262.1 102.6L264.9 122.7L262.4 115.5L267.1 134.7L262.9 128.4L272.9 148.5L264.1 141.3L272.1 163.4L264.0 154.2L263.1 157.2L263.1 166L260.9 166L260.9 157.2L259.9 154.2L251.6 161.7L260.0 141.3L252.4 147.8L260.9 128.4L257.0 135.0L260.6 115.5L255.8 122.5L261.0 102.6L257.8 108.2L261.5 89.7L260.6 95.0Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M292.2 53.0L294.2 69.6L293.0 64.3L296.4 82.7L293.8 76.9L297.8 95.9L294.5 89.4L298.6 107.5L295.0 102.0L304.2 121.1L296.5 114.5L306.3 133.1L297.3 127.0L308.2 146.0L298.1 139.6L311.4 159.7L299.1 152.1L297.1 155.6L297.1 167L294.9 167L294.9 155.6L293.8 152.1L284.9 160.1L292.9 139.6L282.6 147.6L292.8 127.0L284.0 133.3L293.6 114.5L289.6 121.9L292.8 102.0L287.7 108.3L292.9 89.4L290.1 95.3L292.4 76.9L289.6 81.8L292.3 64.3L290.6 67.7Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M330.7 34.0L332.0 49.7L331.3 44.6L334.2 62.1L332.0 56.4L337.2 73.7L332.8 68.2L339.0 86.5L333.4 80.0L338.5 98.2L333.6 91.8L342.8 108.7L334.7 103.6L339.2 122.3L334.3 115.3L344.4 133.5L335.6 127.1L342.7 147.5L335.5 138.9L352.4 158.3L337.7 150.7L335.1 154.6L335.1 168L332.9 168L332.9 154.6L331.5 150.7L321.5 159.6L332.0 138.9L325.4 146.2L331.5 127.1L324.2 135.0L331.0 115.3L323.1 122.1L331.6 103.6L327.4 109.9L330.5 91.8L322.8 98.8L331.2 80.0L327.9 84.3L330.9 68.2L327.6 73.8L330.6 56.4L327.6 60.8L330.8 44.6L329.6 50.2Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M370.3 68.0L372.0 83.1L370.8 79.1L374.0 96.6L371.4 91.4L376.0 108.5L372.0 103.8L375.5 122.8L372.1 116.1L379.0 135.5L373.0 128.4L378.2 149.0L373.0 140.7L383.0 160.8L374.2 153.0L373.1 156.2L373.1 166L370.9 166L370.9 156.2L370.5 153.0L364.5 162.2L369.6 140.7L361.2 148.9L370.1 128.4L364.7 136.3L369.8 116.1L363.8 121.1L370.4 103.8L367.8 108.5L370.3 91.4L368.6 96.8L370.2 79.1L369.1 84.8Z"/>
+                    <Path Fill="#1C2A30" Data="F1 M399.5 47.0L400.9 61.4L399.7 57.5L402.8 74.3L399.9 69.3L403.1 85.8L399.8 81.0L405.4 98.4L400.2 92.7L406.6 111.3L400.3 104.5L406.4 121.9L400.1 116.2L407.7 135.8L400.2 127.9L408.8 147.8L400.3 139.7L406.4 160.4L399.7 151.4L399.1 155.0L399.1 167L396.9 167L396.9 155.0L395.9 151.4L387.4 158.7L395.7 139.7L385.7 148.0L396.4 127.9L388.9 134.8L396.3 116.2L387.6 121.9L397.2 104.5L391.5 110.2L398.1 92.7L395.0 98.8L398.1 81.0L394.3 86.0L398.6 69.3L396.2 74.1L399.0 57.5L397.8 61.6Z"/>
+                </Canvas>
+                <Path Fill="{StaticResource SceneMist}"><Path.Data><EllipseGeometry Center="160,176" RadiusX="200" RadiusY="26"/></Path.Data></Path>
+                <!-- the warm light of the fire over the whole clearing (burning / embers); FireX moves its centre -->
+                <Path x:Name="GlowLit" Data="M0,0 H400 V200 H0 Z">
+                    <Path.Fill>
+                        <RadialGradientBrush x:Name="GlowLitBrush" Center="0.76,0.92" GradientOrigin="0.76,0.92" RadiusX="0.58" RadiusY="0.58">
+                            <GradientStop Offset="0" Color="#9EF08A3C"/>
+                            <GradientStop Offset="0.28" Color="#33F08A3C"/>
+                            <GradientStop Offset="1" Color="#00F08A3C"/>
+                        </RadialGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <Path x:Name="GlowEmbers" Data="M0,0 H400 V200 H0 Z">
+                    <Path.Fill>
+                        <RadialGradientBrush x:Name="GlowEmbersBrush" Center="0.76,0.92" GradientOrigin="0.76,0.92" RadiusX="0.58" RadiusY="0.58">
+                            <GradientStop Offset="0" Color="#4DF08A3C"/>
+                            <GradientStop Offset="0.28" Color="#14F08A3C"/>
+                            <GradientStop Offset="1" Color="#00F08A3C"/>
+                        </RadialGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <!-- the dead tree -->
+                <Canvas>
+                    <Path Fill="#05080A" Data="M30,200 L40,200 L58,112 L72,46 L68,45 L52,110 Z"/>
+                    <Path Stroke="#05080A" StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M58,112 L36,92 L28,76"/>
+                    <Path Stroke="#05080A" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M36,92 L22,88"/>
+                    <Path Stroke="#05080A" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M63,88 L86,70 L92,56"/>
+                    <Path Stroke="#05080A" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M86,70 L100,68"/>
+                    <Path Stroke="#05080A" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M68,62 L58,48"/>
+                    <Path Stroke="#05080A" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M48,140 L72,128"/>
+                </Canvas>
+                <!-- near pines -->
+                <Canvas>
+                    <Path Fill="#060A0C" Data="F1 M116.2 103.0L117.6 117.3L116.7 113.9L119.7 131.4L117.3 125.9L123.4 142.6L118.3 138.0L123.9 156.8L118.6 150.1L125.1 169.8L119.0 162.1L126.6 182.7L119.5 174.2L126.2 193.0L119.6 186.3L119.1 189.4L119.1 199L116.9 199L116.9 189.4L116.3 186.3L109.5 193.2L115.4 174.2L106.0 182.2L115.7 162.1L108.4 169.3L116.4 150.1L112.8 155.7L116.1 138.0L112.5 143.3L116.1 125.9L113.6 129.8L116.0 113.9L114.4 119.1Z"/>
+                    <Path Fill="#060A0C" Data="F1 M349.4 31.0L351.1 46.8L350.2 42.1L353.3 57.8L351.0 54.4L355.1 72.4L351.8 66.8L359.8 83.8L353.2 79.1L361.5 96.5L354.0 91.4L359.4 110.6L354.0 103.7L368.8 121.6L356.4 116.0L362.9 135.5L355.6 128.4L374.9 147.3L358.4 140.7L376.6 161.0L359.2 153.0L368.2 171.9L358.0 165.3L374.8 184.7L359.8 177.6L357.6 182.2L357.6 199L354.4 199L354.4 182.2L353.2 177.6L341.8 186.2L350.5 165.3L330.5 173.1L352.2 153.0L341.2 161.3L351.8 140.7L341.6 147.0L351.2 128.4L341.0 135.6L350.7 116.0L340.5 123.1L350.7 103.7L343.0 110.4L351.0 91.4L346.4 98.0L350.3 79.1L345.3 85.4L349.8 66.8L345.0 72.4L349.7 54.4L346.8 60.3L349.5 42.1L347.7 46.9Z"/>
+                    <Path Fill="#060A0C" Data="F1 M392.5 7.0L394.0 22.7L392.8 17.7L396.8 34.3L393.3 29.7L395.6 47.5L393.0 41.6L397.2 59.0L393.3 53.6L400.4 71.2L394.0 65.5L405.4 82.9L394.9 77.5L400.7 94.9L394.0 89.4L405.0 107.3L394.8 101.3L409.1 120.7L395.6 113.3L410.6 131.0L395.8 125.2L415.6 144.8L396.8 137.2L415.4 157.6L396.7 149.1L416.2 169.1L396.9 161.1L421.5 180.4L397.9 173.0L393.8 178.0L393.8 197L390.2 197L390.2 178.0L388.1 173.0L372.3 180.5L388.2 161.1L373.0 169.9L387.7 149.1L370.1 157.4L389.3 137.2L378.0 145.1L389.2 125.2L377.3 132.0L390.2 113.3L382.2 120.4L388.9 101.3L375.4 107.2L390.2 89.4L381.9 94.4L391.0 77.5L386.0 82.7L390.5 65.5L383.4 71.8L391.4 53.6L387.5 58.3L391.3 41.6L386.7 46.8L391.9 29.7L389.8 33.6L392.1 17.7L390.7 22.6Z"/>
+                </Canvas>
+                <!-- ground -->
+                <Path Fill="#080D0F" Data="M0,188 Q120,178 200,181 T400,186 V200 H0 Z"/>
+                <!-- everything around the fire, drawn relative to the fire and moved to FireX -->
+                <Canvas x:Name="Pit">
+                    <Canvas.RenderTransform>
+                        <TranslateTransform x:Name="PitShift" X="304"/>
+                    </Canvas.RenderTransform>
+                    <Path x:Name="GroundGlowLit" Fill="{StaticResource SceneFireLight}"><Path.Data><EllipseGeometry Center="0,187" RadiusX="70" RadiusY="11"/></Path.Data></Path>
+                    <Path x:Name="GroundGlowEmbers" Fill="{StaticResource SceneFireLight}"><Path.Data><EllipseGeometry Center="0,187" RadiusX="34" RadiusY="6"/></Path.Data></Path>
+                    <Canvas x:Name="PitBackCold">
+                        <!-- stumps (fx - 46, 180) and (fx + 44, 179) -->
+                        <Path Fill="#151C1F" Data="M-51.5,172 h11 v8 h-11 Z"/>
+                        <Path Fill="#1E272A"><Path.Data><EllipseGeometry Center="-46,172" RadiusX="5.5" RadiusY="2.2"/></Path.Data></Path>
+                        <Path Fill="#151C1F" Data="M39.5,172 h9 v7 h-9 Z"/>
+                        <Path Fill="#1E272A"><Path.Data><EllipseGeometry Center="44,172" RadiusX="4.5" RadiusY="1.8"/></Path.Data></Path>
+                        <!-- seats: log benches at (fx - 72, 192) rotate(-7) and (fx + 70, 193) rotate(9) -->
+                        <Canvas>
+                            <Canvas.RenderTransform><TransformGroup><RotateTransform Angle="-7"/><TranslateTransform X="-72" Y="192"/></TransformGroup></Canvas.RenderTransform>
+                            <Path Fill="#151C1F"><Path.Data><RectangleGeometry Rect="-25,-4.6,50,9.2" RadiusX="4.6" RadiusY="4.6"/></Path.Data></Path>
+                            <Path Fill="#1E272A"><Path.Data><EllipseGeometry Center="24,0" RadiusX="2.6" RadiusY="4.6"/></Path.Data></Path>
+                        </Canvas>
+                        <Canvas>
+                            <Canvas.RenderTransform><TransformGroup><RotateTransform Angle="9"/><TranslateTransform X="70" Y="193"/></TransformGroup></Canvas.RenderTransform>
+                            <Path Fill="#151C1F"><Path.Data><RectangleGeometry Rect="-22,-4.6,44,9.2" RadiusX="4.6" RadiusY="4.6"/></Path.Data></Path>
+                            <Path Fill="#1E272A"><Path.Data><EllipseGeometry Center="21,0" RadiusX="2.6" RadiusY="4.6"/></Path.Data></Path>
+                        </Canvas>
+                        <!-- the back half of the stone ring -->
+                        <Path Fill="#1C2427" Data="F1 M-28.7,185.2 A4.0,2.5 0 1 1 -20.7,185.2 A4.0,2.5 0 1 1 -28.7,185.2 Z M-24.2,182.6 A4.7,3.1 0 1 1 -14.8,182.6 A4.7,3.1 0 1 1 -24.2,182.6 Z M-14.5,180.9 A5.4,2.5 0 1 1 -3.7,180.9 A5.4,2.5 0 1 1 -14.5,180.9 Z M-0.3,180.6 A4.0,3.1 0 1 1 7.7,180.6 A4.0,3.1 0 1 1 -0.3,180.6 Z M10.9,181.7 A4.7,2.5 0 1 1 20.3,181.7 A4.7,2.5 0 1 1 10.9,181.7 Z M17.9,184.0 A5.4,3.1 0 1 1 28.7,184.0 A5.4,3.1 0 1 1 17.9,184.0 Z"/>
+                        <!-- the crossed logs in the pit -->
+                        <Path Fill="#151C1F"><Path.Data><RectangleGeometry Rect="-20,181,40,6" RadiusX="3" RadiusY="3"><RectangleGeometry.Transform><RotateTransform Angle="-14" CenterX="0" CenterY="184"/></RectangleGeometry.Transform></RectangleGeometry></Path.Data></Path>
+                        <Path Fill="#131A1D"><Path.Data><RectangleGeometry Rect="-20,181,40,6" RadiusX="3" RadiusY="3"><RectangleGeometry.Transform><RotateTransform Angle="14" CenterX="0" CenterY="184"/></RectangleGeometry.Transform></RectangleGeometry></Path.Data></Path>
+                    </Canvas>
+                    <Canvas x:Name="PitBackWarm">
+                        <!-- stumps (fx - 46, 180) and (fx + 44, 179) -->
+                        <Path Fill="#24170F" Data="M-51.5,172 h11 v8 h-11 Z"/>
+                        <Path Fill="#3B2617"><Path.Data><EllipseGeometry Center="-46,172" RadiusX="5.5" RadiusY="2.2"/></Path.Data></Path>
+                        <Path Fill="#24170F" Data="M39.5,172 h9 v7 h-9 Z"/>
+                        <Path Fill="#3B2617"><Path.Data><EllipseGeometry Center="44,172" RadiusX="4.5" RadiusY="1.8"/></Path.Data></Path>
+                        <!-- seats: log benches at (fx - 72, 192) rotate(-7) and (fx + 70, 193) rotate(9) -->
+                        <Canvas>
+                            <Canvas.RenderTransform><TransformGroup><RotateTransform Angle="-7"/><TranslateTransform X="-72" Y="192"/></TransformGroup></Canvas.RenderTransform>
+                            <Path Fill="#24170F"><Path.Data><RectangleGeometry Rect="-25,-4.6,50,9.2" RadiusX="4.6" RadiusY="4.6"/></Path.Data></Path>
+                            <Path Fill="#3B2617"><Path.Data><EllipseGeometry Center="24,0" RadiusX="2.6" RadiusY="4.6"/></Path.Data></Path>
+                        </Canvas>
+                        <Canvas>
+                            <Canvas.RenderTransform><TransformGroup><RotateTransform Angle="9"/><TranslateTransform X="70" Y="193"/></TransformGroup></Canvas.RenderTransform>
+                            <Path Fill="#24170F"><Path.Data><RectangleGeometry Rect="-22,-4.6,44,9.2" RadiusX="4.6" RadiusY="4.6"/></Path.Data></Path>
+                            <Path Fill="#3B2617"><Path.Data><EllipseGeometry Center="21,0" RadiusX="2.6" RadiusY="4.6"/></Path.Data></Path>
+                        </Canvas>
+                        <!-- the back half of the stone ring -->
+                        <Path Fill="#2A221D" Data="F1 M-28.7,185.2 A4.0,2.5 0 1 1 -20.7,185.2 A4.0,2.5 0 1 1 -28.7,185.2 Z M-24.2,182.6 A4.7,3.1 0 1 1 -14.8,182.6 A4.7,3.1 0 1 1 -24.2,182.6 Z M-14.5,180.9 A5.4,2.5 0 1 1 -3.7,180.9 A5.4,2.5 0 1 1 -14.5,180.9 Z M-0.3,180.6 A4.0,3.1 0 1 1 7.7,180.6 A4.0,3.1 0 1 1 -0.3,180.6 Z M10.9,181.7 A4.7,2.5 0 1 1 20.3,181.7 A4.7,2.5 0 1 1 10.9,181.7 Z M17.9,184.0 A5.4,3.1 0 1 1 28.7,184.0 A5.4,3.1 0 1 1 17.9,184.0 Z"/>
+                        <!-- the crossed logs in the pit -->
+                        <Path Fill="#24170F"><Path.Data><RectangleGeometry Rect="-20,181,40,6" RadiusX="3" RadiusY="3"><RectangleGeometry.Transform><RotateTransform Angle="-14" CenterX="0" CenterY="184"/></RectangleGeometry.Transform></RectangleGeometry></Path.Data></Path>
+                        <Path Fill="#2A1A10"><Path.Data><RectangleGeometry Rect="-20,181,40,6" RadiusX="3" RadiusY="3"><RectangleGeometry.Transform><RotateTransform Angle="14" CenterX="0" CenterY="184"/></RectangleGeometry.Transform></RectangleGeometry></Path.Data></Path>
+                    </Canvas>
+                    <!-- the fire's light on the stumps and seats (burning only) -->
+                    <Canvas x:Name="BackHighlights">
+                        <Path Stroke="#73F08A3C" StrokeThickness="0.9" Data="M-51.5,173 V180"/>
+                        <Path Stroke="#73F08A3C" StrokeThickness="0.9" Data="M39.5,173 V179"/>
+                        <Path Stroke="#73F08A3C" StrokeThickness="0.9" Data="M-21,-4.2 H21">
+                            <Path.RenderTransform><TransformGroup><RotateTransform Angle="-7"/><TranslateTransform X="-72" Y="192"/></TransformGroup></Path.RenderTransform>
+                        </Path>
+                        <Path Stroke="#73F08A3C" StrokeThickness="0.9" Data="M-18,-4.2 H18">
+                            <Path.RenderTransform><TransformGroup><RotateTransform Angle="9"/><TranslateTransform X="70" Y="193"/></TransformGroup></Path.RenderTransform>
+                        </Path>
+                    </Canvas>
+                    <!-- burned down: glowing logs -->
+                    <Canvas x:Name="EmberLogs">
+                        <Path Stroke="#F08A3C" StrokeThickness="1.1" Opacity="0.9" Data="M-14,183.5 l6,-1.5 5,1 6,-1.6 M-4,186 l7,-2 6,0.6"/>
+                        <Path Fill="#F08A3C" Opacity="0.35"><Path.Data><EllipseGeometry Center="0,183" RadiusX="10" RadiusY="3"/></Path.Data></Path>
+                    </Canvas>
+                    <!-- the flame: translate(0, 184) scale(1.2); FlameWrap = catch / die-out, FlameInner = flicker (origin: bottom centre) -->
+                    <Canvas x:Name="FlameHost">
+                        <Canvas.RenderTransform><TransformGroup><ScaleTransform ScaleX="1.2" ScaleY="1.2"/><TranslateTransform Y="184"/></TransformGroup></Canvas.RenderTransform>
+                        <Canvas x:Name="FlameWrap">
+                            <Canvas.RenderTransform><ScaleTransform x:Name="FlameWrapScale" CenterX="-1" CenterY="0"/></Canvas.RenderTransform>
+                            <Canvas x:Name="FlameInner">
+                                <Canvas.RenderTransform><ScaleTransform x:Name="FlameFlicker" CenterX="-1" CenterY="0"/></Canvas.RenderTransform>
+                                <Path Data="M-17,0 C-21,-9 -16,-17 -12,-25 C-10,-30 -11,-35 -9,-42 C-6,-35 -4,-31 -2,-28 C-2,-38 1,-50 3,-62 C5,-50 8,-42 9,-34 C11,-38 13,-42 15,-46 C16,-36 14,-26 17,-16 C19,-10 18,-4 17,0 Z">
+                                    <Path.Fill>
+                                        <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                                            <GradientStop Offset="0" Color="#F08A3C"/>
+                                            <GradientStop Offset="0.55" Color="#D2452A"/>
+                                            <GradientStop Offset="1" Color="#1AB0182D"/>
+                                        </LinearGradientBrush>
+                                    </Path.Fill>
+                                </Path>
+                                <Path Data="M-12,0 C-14,-8 -10,-15 -7,-22 C-6,-18 -4,-16 -2,-15 C-1,-24 1,-32 3,-40 C5,-32 7,-26 8,-20 C10,-24 11,-27 12,-29 C13,-20 13,-8 12,0 Z">
+                                    <Path.Fill>
+                                        <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                                            <GradientStop Offset="0" Color="#FFC27A"/>
+                                            <GradientStop Offset="0.6" Color="#F08A3C"/>
+                                            <GradientStop Offset="1" Color="#33F08A3C"/>
+                                        </LinearGradientBrush>
+                                    </Path.Fill>
+                                </Path>
+                                <Path Fill="#FFCF8A" Opacity="0.9" Data="M-6,0 C-7,-6 -5,-10 -3,-14 C-2,-11 0,-9 1,-9 C2,-13 3,-17 4,-20 C6,-13 7,-6 6,0 Z"/>
+                            </Canvas>
+                        </Canvas>
+                    </Canvas>
+                    <!-- the light that swells when the fire catches (rests invisible) -->
+                    <Path x:Name="Flare" Opacity="0" Fill="{StaticResource SceneFireLight}"><Path.Data><EllipseGeometry Center="0,170" RadiusX="130" RadiusY="70"/></Path.Data></Path>
+                    <!-- the front half of the stone ring -->
+                    <Path x:Name="PitFrontCold" Fill="#1C2427" Data="F1 M20.7,186.8 A4.0,2.5 0 1 1 28.7,186.8 A4.0,2.5 0 1 1 20.7,186.8 Z M14.8,189.4 A4.7,3.1 0 1 1 24.2,189.4 A4.7,3.1 0 1 1 14.8,189.4 Z M3.7,191.1 A5.4,2.5 0 1 1 14.5,191.1 A5.4,2.5 0 1 1 3.7,191.1 Z M-7.7,191.4 A4.0,3.1 0 1 1 0.3,191.4 A4.0,3.1 0 1 1 -7.7,191.4 Z M-20.3,190.3 A4.7,2.5 0 1 1 -10.9,190.3 A4.7,2.5 0 1 1 -20.3,190.3 Z M-28.7,188.0 A5.4,3.1 0 1 1 -17.9,188.0 A5.4,3.1 0 1 1 -28.7,188.0 Z"/>
+                    <Path x:Name="PitFrontWarm" Fill="#3A2D24" Data="F1 M20.7,186.8 A4.0,2.5 0 1 1 28.7,186.8 A4.0,2.5 0 1 1 20.7,186.8 Z M14.8,189.4 A4.7,3.1 0 1 1 24.2,189.4 A4.7,3.1 0 1 1 14.8,189.4 Z M3.7,191.1 A5.4,2.5 0 1 1 14.5,191.1 A5.4,2.5 0 1 1 3.7,191.1 Z M-7.7,191.4 A4.0,3.1 0 1 1 0.3,191.4 A4.0,3.1 0 1 1 -7.7,191.4 Z M-20.3,190.3 A4.7,2.5 0 1 1 -10.9,190.3 A4.7,2.5 0 1 1 -20.3,190.3 Z M-28.7,188.0 A5.4,3.1 0 1 1 -17.9,188.0 A5.4,3.1 0 1 1 -28.7,188.0 Z"/>
+                    <Path x:Name="FrontHighlights" Stroke="#8CF08A3C" StrokeThickness="0.8" Data="M21.9,185.6 q2.8 -2.3 5.6 0 M16.2,187.9 q3.3 -2.8 6.6 0 M5.3,189.9 q3.8 -2.3 7.6 0 M-6.5,189.9 q2.8 -2.8 5.6 0 M-18.9,189.0 q3.3 -2.3 6.6 0 M-27.1,186.5 q3.8 -2.8 7.6 0"/>
+                    <!-- a thread of smoke over a dead or burned-down fire -->
+                    <Path x:Name="Smoke" Stroke="#6B7B81" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M0,176 c-6,-10 6,-16 0,-26 s4,-16 2,-24"/>
+                    <!-- still sparks (static copies, and the live scene when nothing may move) -->
+                    <Canvas x:Name="Sparks">
+                        <Path Fill="#FFB36B" Opacity="0.9"><Path.Data><EllipseGeometry Center="-6,116" RadiusX="1.2" RadiusY="1.2"/></Path.Data></Path>
+                        <Path Fill="#FFB36B" Opacity="0.7"><Path.Data><EllipseGeometry Center="8,104" RadiusX="1" RadiusY="1"/></Path.Data></Path>
+                        <Path Fill="#FFB36B" Opacity="0.5"><Path.Data><EllipseGeometry Center="-1,92" RadiusX="0.9" RadiusY="0.9"/></Path.Data></Path>
+                        <Path Fill="#FFB36B" Opacity="0.35"><Path.Data><EllipseGeometry Center="11,80" RadiusX="0.8" RadiusY="0.8"/></Path.Data></Path>
+                        <Path Fill="#FFB36B" Opacity="0.25"><Path.Data><EllipseGeometry Center="-9,70" RadiusX="0.7" RadiusY="0.7"/></Path.Data></Path>
+                        <Path Fill="#FFB36B" Opacity="0.18"><Path.Data><EllipseGeometry Center="3,58" RadiusX="0.6" RadiusY="0.6"/></Path.Data></Path>
+                    </Canvas>
+                    <!-- rising embers (12, built in code; the live scene only) -->
+                    <Canvas x:Name="Risers"/>
+                </Canvas>
+            </Canvas>
+        </Viewbox>
+    </Grid>
+</UserControl>

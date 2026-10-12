@@ -14,9 +14,32 @@
     <AssemblyName>DBDAutoReShade</AssemblyName>
     <RootNamespace>DBDAutoReShade.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>DBD Auto ReShade</Authors>
     <Description>Realm-based ReShade preset switcher for Dead by Daylight (local OCR).</Description>
+    <!--
+      A single-file publish (the README's portable command) bundles the WPF native libraries (wpfgfx_cor3.dll,
+      PresentationNative_cor3.dll, D3DCompiler_47_cor3.dll, PenImc_cor3.dll, vcruntime140_cor3.dll) into the exe,
+      as in the 1.0 exe, instead of leaving them loose beside it. Only the Licenses folder ships next to the exe.
+    -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <!--
+    Campfire assets. Everything under Assets is compiled into the assembly as a WPF Resource, so the
+    pack URIs (pack://application:,,,/DBDAutoReShade;component/Assets/...) work in a single-file publish:
+    the map pictures and their map-images.json index, the embedded fonts, and the sounds.
+    The theme dictionaries under Themes are XAML Pages (compiled to BAML), which the SDK includes by default.
+    The font licences (SIL OFL 1.1) and the credits ship as loose files in a Licenses folder next to the
+    executable, so the whole publish folder is the package. CREDITS.md is written for that shipped layout.
+  -->
+  <ItemGroup>
+    <Resource Include="Assets\Maps\**\*.png" />
+    <Resource Include="Assets\Maps\map-images.json" />
+    <Resource Include="Assets\Fonts\**\*.ttf" />
+    <Resource Include="Assets\Sounds\**\*.wav" />
+    <Content Include="Assets\Fonts\OFL-*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Link="Licenses\%(Filename)%(Extension)" />
+    <Content Include="Assets\CREDITS.md" Condition="Exists('Assets\CREDITS.md')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Link="Licenses\CREDITS.md" />
+  </ItemGroup>
 
 </Project>

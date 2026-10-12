@@ -1,7 +1,8 @@
 # DBD Auto ReShade — Progress
 
-**Current version: 1.1.0** (audit fix pass on top of the 1.0.x line). Release build: 0 warnings.
-Tests: **722/722 passing**.
+**Current version: 1.2.0** (the Campfire UI on top of the 1.1.0 audit fix pass). Release build: 0 warnings.
+Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 off-screen snapshot renders and
+1 packaging check).
 
 ## Stack choice
 - **.NET 10 (LTS), C# / WPF** (`net10.0-windows10.0.19041.0`): best Windows integration,
@@ -21,12 +22,20 @@ Tests: **722/722 passing**.
 - **Hotkeys: `RegisterHotKey` on a dedicated message-pump thread** (no window handle, no
   hooks), always with `MOD_NOREPEAT`, behind `IGlobalHotkeyService`. `Start` returns the real
   registration result; `Stop` joins the pump thread, so re-registering the same combo is safe.
+  Two instances: the detection hotkey and (1.2) the Global preset hotkey.
 - **Process access: query-limited only** (`PROCESS_QUERY_LIMITED_INFORMATION` +
   `QueryFullProcessImageName`, once per new PID; `GetProcessTimes` for the snapshot key;
   token integrity level). Never `PROCESS_VM_READ`, `Process.MainModule` or module lists.
 - **Config: JSON** in `%AppData%\DBDAutoReShade\`, thread-safe atomic saves (unique temp file,
   flushed to disk), corrupt-file quarantine with a unique name, locked files retried and never
-  replaced by defaults.
+  replaced by defaults. A development-only override (`DBDAUTORESHADE_DATA_DIR`) moves all app
+  data elsewhere and turns off DBD/ReShade.ini auto-detection.
+- **UI (1.2): plain WPF in the Campfire design** — one theme dictionary (`Themes/Campfire.xaml`)
+  with templates for every control used (never Windows' light templates), `WindowChrome` for the
+  custom title bar, embedded fonts and map pictures as WPF `Resource` items (pack URIs work in the
+  single-file publish), motion on WPF animation clocks behind one `MotionPolicy`.
+- **Sound (1.2): winmm `PlaySound` (`SND_MEMORY | SND_ASYNC`)** from an in-memory, volume-scaled
+  copy of a 16-bit PCM WAV, behind `ISoundEffects`. No audio library.
 - **No external packages** beyond the test SDK (xUnit): smaller, fully offline-buildable,
   portable ZIP.
 
@@ -36,13 +45,14 @@ Tests: **722/722 passing**.
   margin — adaptive for near-identical names in one realm — and a map/realm-line cross-check),
   `OcrRegions` (normalized), `CapturedImage` + `ImagePreprocessingService` (pure),
   `RealmDatabaseService` (version-aware override, never throws for a bad override),
-  `AppConfigService`, `HotkeyParser`, `PresetValidationService`,
-  `PresetDecisionService`/`PresetResolver`, `ReshadeIniFile` (byte-preserving parser),
-  `ReshadeConfigurationService` (stable shortcut allocation, entry ownership, startup-preset
-  write, modifier-matching rules), `ReshadeSearchLocations` (where ReShade.ini can be, shared
-  by discovery and diagnostics), `ReshadeDiagnosticsService`, `RuntimeStateService` (explicit
-  state machine), `DetectionAggregator` (sliding window of 8 samples with contradiction veto),
-  `DatabaseUpdateService`, embedded `RealmData/mapDatabase.json` (v1, 20 realms / 44 maps).
+  `AppConfigService`, `HotkeyParser` (+ `SameCombo`, `IsReshadeShortcutCombo`),
+  `PresetValidationService`, `PresetDecisionService`/`PresetResolver`, `ReshadeIniFile`
+  (byte-preserving parser), `ReshadeConfigurationService` (stable shortcut allocation, entry
+  ownership, startup-preset write, modifier-matching rules), `ReshadeSearchLocations` (where
+  ReShade.ini can be, shared by discovery and diagnostics), `ReshadeDiagnosticsService`,
+  `RuntimeStateService` (explicit state machine), `DetectionAggregator` (sliding window of 8
+  samples with contradiction veto), `DatabaseUpdateService`, `WavPcm16` / `Pcm16Audio` (WAV
+  parsing and volume² gain), embedded `RealmData/mapDatabase.json` (v1, 20 realms / 44 maps).
 - `DBDAutoReShade.Desktop` (windows): `NativeMethods`, `DbdProcessService` (2 s poll,
   re-entrancy guard, PID changes reported), `ProcessIntegrity`, `DbdWindowService` (client
   bounds, focus, loading-screen occlusion probe), `GdiWindowCaptureService`, `BmpWriter`,
@@ -51,13 +61,32 @@ Tests: **722/722 passing**.
   `SampleEvaluated`), `DebugCropStore`, `IGlobalHotkeyService` + `GlobalHotkeyService`,
   `KeySimulator` (SendInput, 80 ms hold, key-ups always sent), `DbdDiscoveryService`
   (process/Steam/Epic, deduplicated), `ReshadeDiscoveryService`, `MatchLifecycleService`
-  (32×32 thumbnails, no OCR), `PresetActivationService` (typed failure reasons).
-- `DBDAutoReShade.App` (WPF): `AppController` glue, `ReshadeLoadedSnapshotStore`,
-  `MainViewModel`, Status/Presets/Settings, first-run wizard, dark theme,
-  `SingleInstanceGuard`, `ProcessStartTime`, `app.manifest` (PerMonitorV2).
-- `DBDAutoReShade.Tests` (xUnit): **722 tests, all passing**.
+  (32×32 thumbnails, no OCR), `PresetActivationService` (typed failure reasons),
+  `ISoundEffects` + `SoundEffectsService` (one voice, never throws) + `NullSoundEffects`.
+- `DBDAutoReShade.App` (WPF):
+  - Glue: `AppController` (+ `ActivateGlobalNow`, `MapDetected`, the 1.2 settings),
+    `ReshadeLoadedSnapshotStore`, `MapImageCatalog`, `SingleInstanceGuard`, `ProcessStartTime`,
+    `WindowPlacement` (fit to the work area, maximized inset), `app.manifest` (PerMonitorV2).
+  - View models: `MainViewModel` (partials per page: Status, Presets, Settings), `StatusScreen`
+    (what the Status page presents), `PresetRows`, `GreatCoordinator` (the Great landing and
+    the sound's timing).
+  - Windows and pages: `MainWindow` (+ `MainWindow.Motion.cs`), `SetupWizardWindow`,
+    `Views/StatusView`, `Views/PresetsView`, `Views/SettingsView`.
+  - Theme: `Themes/Campfire.xaml` (tokens, type ramp, control templates), `Themes/EntityGeometry.xaml`
+    (the Entity's legs, path data ported from the prototype's SVG).
+  - Controls: `MapPlate`, `SkillCheck` + `SkillCheckMath`, `ScoreEvent`, `CampfireScene`,
+    `FogBackdrop`, `EntityLegs`, `MapPicture` / `AspectFrame`, `MapStrip`, `Keycap`,
+    `CountdownRing`, `StatusDot`, `RestartBanner`, `CrossfadeText`, `CampfireType` (the
+    prototype's clamp() type ramp), `CampfireAssist` / `CampfireAutomation` (placeholders,
+    icons, live regions, focus hand-off).
+  - Media: `MotionPolicy` (+ `MotionPolicyWatch`), `MotionMoment` / `AmbientLoop` / `Anim`,
+    `StateMoment`, `Ease`, `PressFeedback`, `PopupMotion`, `MotionDiagnostics` (test hook),
+    `CampfirePalette`, `CampfireFonts`.
+  - Assets: `Maps/*.png` + `map-images.json`, `Fonts/*.ttf` + OFL texts, `Sounds/great.wav`,
+    `CREDITS.md`.
+- `DBDAutoReShade.Tests` (xUnit): **1144 tests passing, 18 opt-in** (`Campfire/` holds the UI tests).
 
-## Runtime model (v1.1.0)
+## Runtime model (v1.2.0)
 - **Scan**: the detection hotkey toggles an open-ended scan (no timeout). Each tick OCRs the
   map and realm regions; a tick is read only when DBD is the foreground window or none of the
   10 × 3 probe points per region hits another top-level window (DBD not minimized or cloaked).
@@ -66,15 +95,38 @@ Tests: **722/722 passing**.
   one sample ≥ 0.90 with no rival realm, or ≥ 2 agreeing samples ≥ 0.78 that outnumber every
   other realm. The orchestrator's
   single-shot mode (`DetectionPolicy.TimeoutSeconds`) is kept for its API but not used by the app.
-- **Activation**: every switch (detected realm, manual override, Return to Automatic, Test,
-  match end, scan without a confident read) becomes the ONE desired target; a newer one
-  supersedes the older. It is sent immediately when DBD runs and is focused, otherwise by a
-  worker that checks every 250 ms until success, supersession, a final failure or its deadline
-  (detected: none while waiting for gameplay; override and Return to Automatic: 60 s; Test:
-  15 s; match end and scan without result: 10 min). Waiting for focus costs nothing; rejected
-  sends are retried up to 3 times per request, then reported with the fix. The active preset
-  changes only after a successful send; ReShade.ini's `PresetPath` is read before the send
-  ("already active in ReShade") and watched for ~2 s after it ("confirmed by ReShade").
+- **Activation**: every switch (detected realm, manual override, Return to automatic, Test,
+  match end, scan without a confident read, Global preset hotkey / "Switch to Global") becomes
+  the ONE desired target; a newer one supersedes the older. It is sent immediately when DBD runs
+  and is focused, otherwise by a worker that checks every 250 ms until success, supersession, a
+  final failure or its deadline (detected: none while waiting for gameplay; override, Return to
+  automatic and Global preset hotkey: 60 s; Test: 15 s; match end and scan without result:
+  10 min). Waiting for focus costs nothing; rejected sends are retried up to 3 times per request,
+  then reported with the fix. The active preset changes only after a successful send;
+  ReShade.ini's `PresetPath` is read before the send ("already active in ReShade") and watched
+  for ~2 s after it ("confirmed by ReShade").
+- **Global preset hotkey** (1.2, default F9, `globalHotkey`): a second registration, never the
+  detection hotkey's combo and, like the detection hotkey, never a ReShade shortcut combo (the
+  managed pool or an assigned one: RegisterHotKey would swallow the app's own SendInput
+  keystrokes). The handler only queues the press (leaf `_globalPressLock`); presses run one at a
+  time on the thread pool, a press waiting to start absorbs later ones. `ActivateGlobalNow`:
+  DBD not running / no Global preset → status only; otherwise the running scan is cancelled
+  without its own "no read → Global" request, the pending target, the override and the match
+  tracking are dropped (lifecycle disarmed), state → Ready, and Global is requested (origin
+  `Hotkey`, or `GlobalRequest` from the Status override's "Global / Menu").
+- **Map found** (1.2): `MapDetected(realm, map, confidence)` is raised once per accepted
+  confident detection, before the switch and with no controller lock held. `GreatCoordinator`
+  lands the skill check when the window is shown, not minimized and active, the Status page is
+  shown and its check is scanning; the sound is scheduled on a `DispatcherTimer` from the
+  landing's computed hit delay (needle at 0.3°/ms to 4° into the great block), so it is exact
+  even if rendering stalls. Otherwise (and with animations off: a still flash, no delay) it plays
+  at once. `AppController.PlayGreatSound` applies `soundEnabled` and `soundVolume` (gain volume²).
+- **Motion** (1.2): `MotionPolicy.ShouldAnimate` = "Play animations" on, window shown and
+  active; deactivation stops every running moment, so behind the game state changes are instant
+  and no animation clock runs. Ambient loops additionally need no reduced motion (Windows
+  animation effects, `SystemParameters.ClientAreaAnimation`, re-read on WM_SETTINGCHANGE) and run
+  at 20–30 fps; under reduced motion every moment is clamped to ≤ 200 ms (≤ 160 ms delay) except
+  the exact-timing ones (skill check, score event, countdown).
 - **Shortcuts**: a snapshot of what the running DBD's ReShade loaded (PID + creation time;
   persisted next to the config until DBD exits) blocks names whose current (combo, path)
   it doesn't contain (`RestartRequired`). A combo that would first fire an earlier entry for
@@ -86,9 +138,10 @@ Tests: **722/722 passing**.
 - **DBD exit**: auto-restore on + Global set → `PresetPath` in ReShade.ini becomes Global,
   unless ReShade.ini shows the user's own pick made after a confirmed switch to Global.
 - **Concurrency** (`AppController` class doc): lock order `_sendLock` | `_lifecycleCommandGate`
-  → `_gate` → { lifecycle lock, `_iniWriteLock` } (leaf locks). No capture, key send, hotkey
-  (un)registration or lifecycle command runs under `_gate`; every ReShade.ini write holds
-  `_iniWriteLock`; status writes go through `SetStatusLocked` / `SetRequestStatusLocked`.
+  → `_gate` → { lifecycle lock, `_iniWriteLock` } (leaf locks); `_globalPressLock` is a leaf
+  taken alone. No capture, key send, hotkey (un)registration (either hotkey) or lifecycle command
+  runs under `_gate`; every ReShade.ini write holds `_iniWriteLock`; status writes go through
+  `SetStatusLocked` / `SetRequestStatusLocked`; `MapDetected` is raised with no lock held.
 
 ## Completed phases
 - Phase 1 — Foundation: solution, architecture, UI shell, config, DB schema, tests. ✅
@@ -109,8 +162,12 @@ Tests: **722/722 passing**.
   Endpoint configurable, none hard-coded. ✅
 - Phase 9 — Release: Release build clean, self-contained single-file publish + portable ZIP. ✅
 - Phase 10 — v1.1.0 audit fix pass (below): 0 warnings, 722/722 tests. ✅
+- Phase 11 — v1.2.0 Campfire UI (below): Phase A (theme, controls, motion kernel, assets;
+  backend: Global preset hotkey, sound, new settings) and Phase B (window, pages, wizard,
+  screen-level motion), each reviewed and fixed; 0 warnings, 1144/1144 tests + 18 opt-in. ✅
   The portable ZIP and `publish/` folder in the repo root predate 1.1.0; re-run the publish
-  command from the README to ship it.
+  command from the README and zip the whole publish folder (the exe and its `Licenses\`
+  folder; the WPF native libraries and the Campfire assets are bundled into the exe) to ship it.
 
 ## Important decisions / verified facts
 1. **ReShade format verified** against ReShade source (`runtime.cpp`, `ini_file.cpp`) + official
@@ -132,34 +189,165 @@ Tests: **722/722 passing**.
    OCR'd; `Combined` is a reference rectangle for tuning tools, not a fallback. Tunable in
    `DbdLoadingScreenRegions`; realm-only reads still resolve presets.
 4. **Safety boundary kept**: process enumeration (query-limited), window/screen capture,
-   window focus and hit-testing queries, OCR, filesystem, hotkeys, SendInput only. No memory
-   access, injection, hooks, drivers, or traffic inspection anywhere.
+   window focus and hit-testing queries, OCR, filesystem, hotkeys, SendInput, sound playback only.
+   No memory access, injection, hooks, drivers, or traffic inspection anywhere.
 5. Activation requires DBD focused (SendInput goes to the foreground window). Every request
    waits for focus truthfully and says so; nothing is reported as switched before the keys
    went out.
 6. Lifecycle match tracking is a **best-effort external heuristic** (see Runtime model); it
-   can be disabled in Settings ("Restore Global preset when the match ends").
+   can be disabled in Settings ("Restore the Global preset when a match ends").
+7. **Map pictures** (1.2): Behaviour Interactive's in-game map icons from Dead by Daylight, via
+   the Dead by Daylight Wiki (deadbydaylight.wiki.gg) — 44 pictures, one per built-in map (a test
+   checks every map of the built-in database has one), cropped to the picture (torn frames
+   removed) and saved losslessly. **No upscaling of any kind** (the owner ruled out AI and
+   ESRGAN-style upscalers): they are drawn as they are with `BitmapScalingMode=HighQuality`,
+   UniformToFill (centred crop, never stretched), decoded once, frozen and cached (pre-decoded one
+   per idle moment after start-up), and every frame is capped at 1.8× the narrowest/shortest
+   built-in picture (362 × 239 px) in physical pixels; the fog fills the rest. Unknown maps get
+   the fog placeholder with the map's name.
+8. **Great sound** (1.2): an original synthesized recreation (variant "a", "Shing"; no game
+   audio), 16-bit PCM 44.1 kHz mono normalized to a −1.0 dBFS peak (exact linear gain, no
+   clipping). Played at amplitude volume² (50 % ≈ −13 dBFS, 100 % = −1 dBFS, 0 % = skipped), one
+   voice (a new sound stops the previous one), never throws.
+9. **Fonts** (1.2): Barlow (400/500/600/700) and Big Shoulders Display (600/700/800 static
+   instances), SIL OFL 1.1, embedded as Resources. `CREDITS.md` and both OFL texts ship as loose
+   files in `Licenses\` next to the exe (Content items excluded from the single-file bundle).
+10. **New settings** (1.2): `animationsEnabled` (true), `soundEnabled` (true), `soundVolume`
+    (0.5; missing in older configs → 0.5; clamped to 0..1), `globalHotkey` (F9 when missing;
+    an explicit JSON null = cleared and stays cleared; a value that collides with the detection
+    hotkey or a ReShade combo is kept as saved, left unregistered, and the reason shown).
+11. **No computer use** (owner's hard rule): the app is never launched on the desktop and no
+    desktop screenshot is taken. All UI verification is off-screen: the real windows are rendered
+    with `RenderTargetBitmap` far off-screen and never activated (activation is simulated with
+    WM_ACTIVATE), and compared with the prototype's headless-Chromium reference renders.
 
 ## Test status
-`dotnet test -c Release` — **722/722 passing** (0 warnings), covering: DB schema/lookups/
+`dotnet test -c Release` — **1144/1144 passing** (0 warnings; 1162 in total, 18 opt-in skipped),
+covering: DB schema/lookups/
 corruption/override precedence/BOM, normalization (incl. Unicode dashes), similarity, fuzzy
 matching (ambiguity refusal, East/West Wing, map/realm cross-check), presets (valid/missing/
 folder/extension/commas/duplicates incl. Global/unconfigured→Global), config (save/reload/
-reset/corrupt/locked/concurrent saves), state machine (incl. Error recovery), INI round-trip
+reset/corrupt/locked/concurrent saves, the 1.2 settings and their defaults for older configs),
+state machine (incl. Error recovery), INI round-trip
 fidelity (CRLF, spacing, idempotent), shortcut sync (stable allocation, foreign entries incl.
 the owner's real layout, reserved and modifier-fired combos, stale removal, pair alignment,
 no-op first sync), diagnostics, aggregator (window/veto/fast path), OCR regions, preprocessing
 (Otsu on large images), OCR re-probe/downscale, capture fallback, orchestrator (continuous,
 stop races, handle changes, paused ticks, debug sets and retention), scan occlusion probe,
 updater (newer/older/hash/schema/version/size/rollback/non-HTTPS/cancel), hotkey parsing and
-real registration, SendInput sequences and stuck-key release, process monitor and integrity
-levels, Steam discovery, ReShade search locations, lifecycle (trial/menu/drift/motion/focus,
-deadlock stress), controller (focus-aware activation for every source, verification, restart
-and clash blocking, DBD exit startup preset, Reset Settings, hotkey update), view model,
-single instance, XAML theme wiring.
+real registration (incl. refused ReShade combos), SendInput sequences and stuck-key release,
+process monitor and integrity levels, Steam discovery, ReShade search locations, lifecycle
+(trial/menu/drift/motion/focus, deadlock stress), controller (focus-aware activation for every
+source, verification, restart and clash blocking, DBD exit startup preset, Reset Settings,
+hotkey update; the Global preset hotkey: queueing, folding, no interleaving, refused combos, the
+1.1 → 1.2 upgrade path), the WAV maths and the sound service, the embedded `great.wav`, the
+Great coordinator (landing vs. immediate, exactly once), view models (Status/Presets/Settings
+outcomes, Test ring vs. pending test, volume slider), single instance, packaging (`Licenses\`),
+and the Campfire UI on the real windows off-screen: theme (no light templates, context menus),
+controls, type ramp, skill check timing and landing contract, map catalog (a picture for every
+built-in map, the 1.8× cap), motion policy (no animation clock while inactive, minimized, hidden
+or with animations off; reduced motion), state moments, window layout (work-area fit, maximized
+inset, tab order), accessibility (live regions, focus hand-off) and text contrast ≥ 4.5:1 over
+every map's backdrop.
 Controller tests use a fake hotkey service; only `GlobalHotkeyServiceTests` registers real
 hotkeys (Ctrl+Alt+F21/F22, taking turns across test processes). Discovery and setup-check
-tests don't depend on files under `%TEMP%` or `%LOCALAPPDATA%`.
+tests don't depend on files under `%TEMP%` or `%LOCALAPPDATA%`. Opt-in: `DBD_SNAPSHOTS=<dir>`
+renders every state on every page (1280×800 and 1024×680), the wizard and motion contact sheets;
+`DBD_PUBLISH=<dir>` runs the README's publish command and checks the package.
+
+## v1.2.0 — Campfire UI
+The owner chose the "Campfire" prototype (`prototypes/a-campfire`) and asked for the app in
+that design, better-looking map pictures **without any upscaler**, three new settings (turn
+animations off for performance, turn the sound off, a skill-check volume slider at 50 % on first
+run) and a hotkey for the Global preset (F9). Everything 1.1.0 does still works the same; the
+additions are below.
+
+**Window and pages**
+- Custom chrome (36 px caption, real minimize/maximize/close buttons with accessible names);
+  1280×800 by default, minimum 1024×680, resizable, PerMonitorV2. Windows that open centred are
+  fitted to their monitor's work area (the wizard too); the maximized inset is SM_CXFRAME +
+  SM_CXPADDEDBORDER at the window's DPI.
+- Left rail: Status / Presets / Settings (arrow keys move between them without motion; a red
+  dot on Presets while a preset is blocked, named "Restart needed" — or "ReShade.ini needed"
+  when ReShade.ini is missing — for screen readers), DBD
+  running dot, the F8 keycap
+  ("Press F8 on the loading screen to scan"), the F9 keycap ("Global preset"; dimmed with the
+  reason when it can't be registered), last switch time (", failed" in red).
+- Backdrop: the current realm's map blurred and darkened, layered fog, a campfire glow, and the
+  Entity's three legs with a red rim light (static geometry ported from the prototype).
+- Status: state hero, status line, active preset with "Confirmed by ReShade" / "Next: … when
+  the game has focus" / "Forced for … until you return to automatic" (only once the forced file
+  is active), Detection and Last switch lines, the map plate (picture or vector campfire
+  clearing), the skill check and the "Great skill check / Map found: …" score event, the
+  restart and hotkey banners, and the manual override bar — now with "Global / Menu" first
+  ("Switch to Global" → `ActivateGlobalNow()`).
+- Presets: filter by realm or map, Global / Menu pinned, realm rows with map strips, the detail
+  with a 2:1 hero picture and clickable thumbnails, and the preset panel (shortcut, Test with a
+  15 s countdown ring tied to the controller's pending test, Change/Choose file, Clear with an
+  inline confirmation); a row without a preset has its map strip fogged over.
+- Settings: Detection hotkey, Global preset hotkey, Paths (selectable), Behaviour (auto-restore,
+  Play animations, Great sound, volume + Play sound, Debug mode), Map database, ReShade check
+  (tagged lines; selectable text when the clipboard is busy), Danger zone (Reset with an inline
+  confirmation). Every action shows its outcome next to its group
+  (`AppController.LastSaveError`, the controller's status after its lead sentence).
+- Setup wizard restyled, with a new step for the Global preset hotkey.
+- Theme: themed templates for every control (buttons in four styles, CheckBox, Slider, TextBox
+  incl. its Cut/Copy/Paste menu, ComboBox, ScrollBar, ToolTip, ListBox, menus, Keycap), visible
+  keyboard focus, text contrast ≥ 4.5:1 (also over every map backdrop), tab order rail → page →
+  window buttons, live regions for outcomes, banners and the score event.
+
+**Map pictures** — see decision 7; `MapImageCatalog`, `MapPicture`, `AspectFrame`; credits in
+`Assets/CREDITS.md` (shipped as `Licenses\CREDITS.md`).
+
+**Skill check and the Great sound**
+- The skill check sits on the plate while scanning (one revolution per read, ~1.4 s; the zone
+  relocates every revolution) or paused (frozen, grey): F8 keycap in the centre, light-grey ring,
+  hollow white good zone, solid white great block, red needle.
+- Map found → `MapDetected` → `GreatCoordinator`: the needle runs on at 0.3°/ms and stops 4° into
+  the great block (white flash, burst ring, sparks, the sound), the score event, a 0.3 s hold,
+  the dial lifts away, then the fog clears off the map. The sound and the hit come from the same
+  computed delay; with the window minimized, hidden, inactive or on another page the sound plays
+  at once; exactly once per detection, never at startup or on restored states.
+- `Assets/Sounds/great.wav` (decision 8), `SoundEffectsService` / `ISoundEffects`, `WavPcm16`.
+  Settings: "Play the Great skill-check sound when a map is found" (on), "Skill-check sound
+  volume" 0–100 % (50 %; saved when the slider settles; slider and Play sound disabled while the
+  sound is off). The ReShade check reports "Great sound: OK (volume N %)" / "OK (turned off under
+  Settings)" / "unavailable — …".
+
+**Global preset hotkey (F9)** — see Runtime model. Change / Clear in Settings and the wizard
+(same capture as the detection hotkey; both hotkeys are released while capturing; Esc cancels).
+Refused: the other hotkey's combo ("F8 is already the detection hotkey." / "F9 is already the
+Global preset hotkey.") and any ReShade shortcut combo ("Ctrl+Shift+Alt+F19 is reserved for
+ReShade preset shortcuts."). A 1.1 config with F9 as its detection hotkey keeps it; the Global
+preset hotkey then stays unregistered ("F9 is also the detection hotkey; choose another key for
+the Global preset.") until one of them moves, and moving detection registers it at once.
+Behaviour change: the detection hotkey now refuses the ReShade combos too (a stored one is
+kept but not registered, with the reason shown). Diagnostics list both hotkeys and their problems.
+
+**Animations and performance**
+- "Play animations" (on; hint "Turn off to save performance. Animations also stop when Windows
+  animation effects are off."). Off: no storyboards, ambient loops or particles, instant state
+  changes, a still skill check (the needle steps once per read) and a still Great flash (an
+  opacity swap, no delay); the sound still plays.
+- Moments ported from the prototype: one orchestrated moment per state change (a new state
+  interrupts the previous one from where it is), fog-clears map reveal, ember confirm, match-end
+  sink with the legs' yank, campfire catch / die-out / flicker with 12 rising embers, the skill
+  check, the waiting-for-focus heartbeat, the restart rim-light run and banner drop, legs sway and
+  lean-in, blur-bridged text crossfades, Presets hero swap / selection glide / clear fog / filter
+  fade-up, tab crossfade (pointer only), button press scale. Transform and opacity only (plus a
+  short blur on images). A Status change made by the user (override, Return to automatic) is a
+  quick swap instead of the detection story.
+- Performance (the app runs next to the game): nothing animates while the window is inactive,
+  minimized or hidden; Windows animation effects off = short fades only; ambient loops at 20–30
+  fps; the plate's glow effect is attached only while it shows. Tests assert that no animation
+  clock runs in those cases.
+
+**Fonts** — decision 9.
+
+**Verification** — Release build 0 warnings; 1144/1144 tests (+ 18 opt-in). The real windows
+were rendered off-screen in every state, on every page, at 1280×800 and 1024×680, plus motion
+contact sheets, and compared with the prototype's references. Nothing was launched on the
+desktop (decision 11).
 
 ## v1.1.0 — audit fix pass
 A static audit of 1.0.x found the problems below; all are fixed with regression tests.
@@ -275,19 +463,32 @@ A static audit of 1.0.x found the problems below; all are fixed with regression 
   tuning path: regions → preprocessing → thresholds (`MapMatchingService`, `DetectionPolicy`);
   Debug Mode saves the exact crops.
 - Match tracking is heuristic and watches only while DBD is the foreground window; exotic flows
-  may be missed. F8 re-detection, manual override and Return to Automatic always work.
+  may be missed. F8 re-detection, manual override, Return to automatic and F9 always work.
 - The unfocused-scan check hit-tests top-level windows: click-through overlays over DBD's
   map/realm text regions aren't seen as covering it.
 - Fullscreen-exclusive capture falls back to PrintWindow; a frame that stays black is read as
   is, and detection reports nothing instead of guessing.
 - If the stored ReShade snapshot can't be written, or an older app version rewrote ReShade.ini
   while the same DBD kept running, an app restart judges that DBD by ReShade.ini as it is then.
-- Save failures during the setup wizard appear only on the main window's status line.
-- Not covered by automated tests: a second instance next to an elevated first one; WPF visuals
-  (theme, wizard → main window hand-off) are checked by review and XAML tests only.
+- The setup wizard shows only path problems; other save failures during the wizard appear only
+  on the Status page's status line afterwards.
+- Not covered by automated tests: a second instance next to an elevated first one.
 - If a hotkey handler blocks for more than 2 s, `Stop` returns with the hotkey still registered.
+  The detection hotkey's handler still starts the scan on its pump thread (the first capture runs
+  there until the OCR await); the Global preset hotkey's handler only queues.
 - No production database-update endpoint exists yet (by design); configure one in Settings.
+- The Campfire window has never been shown on a real desktop (decision 11): GPU cost of the blur
+  and effects, real per-monitor DPI above 100 % (the test host isn't per-monitor aware; the 150 %
+  frame cap is checked by its maths), Narrator actually announcing the live regions, and keyboard
+  focus returning after the inline confirmations are unverified live.
+- The Great sound has never played through a real audio device (winmm path untested live), and
+  RegisterHotKey swallowing injected keystrokes (the reason for the refused ReShade combos) rests
+  on its documented exact-modifier matching, not on a live reproduction.
+- While you play, the window is inactive, so the moments that happen then (the ReShade confirm,
+  the match-end sink) are applied instantly and not replayed; the Great lands visibly only when the
+  window is in front on the Status page as the map is found (e.g. DBD on another monitor).
+- The setup wizard is not resizable (it is fitted to the work area and its steps scroll).
 
 ## Next work item
-- Live validation against DBD + ReShade; tune regions/thresholds from Debug Mode crops;
-  re-publish the portable ZIP as 1.1.0.
+- Live validation against DBD + ReShade, including the Campfire window, F9 and the Great sound;
+  tune regions/thresholds from Debug Mode crops; re-publish the portable ZIP as 1.2.0.

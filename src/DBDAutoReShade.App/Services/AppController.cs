@@ -69,13 +69,29 @@ namespace DBDAutoReShade.App.Services;
 /// only non-capturing reads such as <see cref="MatchLifecycleService.Phase"/>;
 /// no screen capture or key send runs under <c>_gate</c>; every ReShade.ini
 /// write (shortcut sync and reset cleanup under <c>_gate</c>, the startup-preset
-/// write at DBD exit without it) holds <c>_iniWriteLock</c>; the global hotkey
-/// is registered and released (<see cref="IGlobalHotkeyService.Start"/>/<see cref="IGlobalHotkeyService.Stop"/>,
-/// which join its pump thread, whose handler takes <c>_gate</c>) only without <c>_gate</c>;
-/// the config and the stored ReShade snapshot (a small file next to it) are
+/// write at DBD exit without it) holds <c>_iniWriteLock</c>; the two global
+/// hotkeys (detection and Global preset) are registered and released
+/// (<see cref="IGlobalHotkeyService.Start"/>/<see cref="IGlobalHotkeyService.Stop"/>,
+/// which join the service's pump thread, whose handler takes <c>_gate</c> for
+/// the detection hotkey) only with no controller lock held; the Global preset
+/// hotkey's handler only takes <c>_globalPressLock</c> (a leaf lock: nothing is
+/// called while it is held) to queue the press, so its pump thread never waits
+/// for a switch; the config and the stored ReShade snapshot (a small file next to it) are
 /// saved, read and deleted under <c>_gate</c> (no other lock involved);
 /// <see cref="MatchLifecycleService.PhaseChanged"/> arrives with no lifecycle
-/// lock held, so its handlers may take any of the locks above.
+/// lock held, so its handlers may take any of the locks above;
+/// <see cref="MapDetected"/> is raised with no controller lock held.
+/// </para>
+/// <para>
+/// Global preset hotkey (default F9, <see cref="AppConfig.GlobalHotkey"/>): a
+/// second registration next to the detection hotkey, never the same combo, and,
+/// like the detection hotkey, never one of the app's ReShade shortcut combos
+/// (RegisterHotKey would swallow the app's own preset switches). Its press is
+/// queued off the hotkey's pump thread and runs <see cref="ActivateGlobalNow"/>
+/// on the thread pool, one press at a time, in order: a running scan stops
+/// without its own "no read → Global" request, the pending target, the manual
+/// override and the match tracking are dropped, and Global is requested through
+/// the same focus-aware pipeline as every other switch.
 /// </para>
 /// </summary>
 public sealed class AppController : IDisposable
@@ -95,6 +111,9 @@ public sealed class AppController : IDisposable
     /// <summary>How long the Global switch after a scan without a confident read waits for DBD focus.</summary>
     public static readonly TimeSpan ScanWithoutResultFocusWindow = TimeSpan.FromMinutes(10);
 
+    /// <summary>How long the Global preset hotkey's switch (<see cref="ActivateGlobalNow"/>) waits for DBD focus.</summary>
+    public static readonly TimeSpan GlobalHotkeyFocusWindow = TimeSpan.FromSeconds(60);
+
     private const int VerifyPollMs = 250;
 
     private readonly AppConfigService _configService;
@@ -102,6 +121,8 @@ public sealed class AppController : IDisposable
     private readonly RuntimeStateService _states;
     private readonly IDbdMonitor _dbd;
     private readonly IGlobalHotkeyService _hotkey;
+    private readonly IGlobalHotkeyService _globalHotkey;
+    private readonly ISoundEffects _soundEffects;
     private readonly DetectionOrchestrator _detector;
     private readonly MatchLifecycleService _lifecycle;
     private readonly PresetActivationService _activator;
@@ -129,6 +150,15 @@ public sealed class AppController : IDisposable
     private readonly object _iniWriteLock = new();
 
     private readonly object _gate = new();
+
+    // Queues Global preset hotkey presses (leaf lock: held only to chain a press).
+    private readonly object _globalPressLock = new();
+
+    // The last queued Global preset hotkey press (presses run in order on the pool).
+    private Task _globalPresses = Task.CompletedTask;
+
+    // A queued press has not started yet: a new press is folded into it.
+    private bool _globalPressWaiting;
     private bool _disposed;
 
     // Set at the end of Initialize: DBD status events before that are ignored
@@ -150,6 +180,10 @@ public sealed class AppController : IDisposable
 
     // The request whose text the status line shows (null = an unrelated message).
     private ActivationRequest? _statusOwner;
+
+    // The Tests' numbers, and how the newest Test that ended by itself ended (LastTestOutcome).
+    private long _testSerial;
+    private TestOutcome? _lastTestOutcome;
 
     // Latest lifecycle decision; older commands that lost the race are skipped.
     private long _lifecycleTicket;
@@ -177,8 +211,9 @@ public sealed class AppController : IDisposable
     // switch it was started for, whatever the status line shows meanwhile.
     private long _activeSwitch;
     private string? _hotkeyError;
+    private string? _globalHotkeyError;
 
-    // The global hotkey is released while the UI captures a new one.
+    // Both global hotkeys are released while the UI captures a new one.
     private bool _hotkeySuspended;
 
     // What the running DBD's ReShade loaded (null while DBD is not running);
@@ -187,6 +222,9 @@ public sealed class AppController : IDisposable
 
     // Bumped by every ResetSettings (the UI drops unsaved drafts).
     private int _settingsResetCount;
+
+    // The last config save's error (null: it worked). Written under _gate.
+    private string? _lastSaveError;
 
     /// <param name="activationRetryInterval">Focus-poll / retry cadence of the activation worker (default 250 ms).</param>
     /// <param name="maxActivationAttempts">Rejected sends (SendBlocked) allowed per request; waiting for focus costs none.</param>
@@ -197,6 +235,8 @@ public sealed class AppController : IDisposable
     /// <param name="discoverReshadeIniPath">Test seam: finds ReShade.ini for a DBD executable (default: <see cref="ReshadeDiscoveryService"/>).</param>
     /// <param name="processStartTime">Test seam: a process's creation time, null when unknown (default: <see cref="ProcessStartTime.TryGet"/>, query-limited access).</param>
     /// <param name="isScanTextUncovered">Test seam: whether no other window covers DBD's loading-screen text, so a scan may read a DBD that is not the foreground window (default: <see cref="DbdWindowService.IsLoadingScreenTextUncovered"/>).</param>
+    /// <param name="globalPresetHotkey">The Global preset hotkey's registration, a second instance next to <paramref name="hotkey"/> (default: one that registers nothing with Windows and never fires, for tests and tools).</param>
+    /// <param name="soundEffects">The app's sound effects (default: <see cref="NullSoundEffects"/>, silent).</param>
     public AppController(
         AppConfigService configService,
         RealmDatabaseService database,
@@ -216,13 +256,17 @@ public sealed class AppController : IDisposable
         Func<string?>? discoverDbdExePath = null,
         Func<string?, string?>? discoverReshadeIniPath = null,
         Func<int, DateTime?>? processStartTime = null,
-        Func<IntPtr, bool>? isScanTextUncovered = null)
+        Func<IntPtr, bool>? isScanTextUncovered = null,
+        IGlobalHotkeyService? globalPresetHotkey = null,
+        ISoundEffects? soundEffects = null)
     {
         _configService = configService;
         _database = database;
         _states = states;
         _dbd = dbd;
         _hotkey = hotkey;
+        _globalHotkey = globalPresetHotkey ?? new UnregisteredHotkeyService();
+        _soundEffects = soundEffects ?? NullSoundEffects.Instance;
         _detector = detector;
         _lifecycle = lifecycle;
         _activator = activator;
@@ -242,6 +286,19 @@ public sealed class AppController : IDisposable
     }
 
     public event EventHandler? Changed;
+
+    /// <summary>
+    /// Raised once per confident detection: a scan read a map (or realm) and the
+    /// controller accepted it, whether or not a preset is assigned to it. Raised
+    /// on the scan's thread-pool thread with no controller lock held, right after
+    /// the state left <see cref="AppState.DetectingLoadingScreen"/> (a
+    /// <see cref="Changed"/> for that may come first) and before the switch it
+    /// leads to is attempted. Subscribers marshal to the UI thread themselves and
+    /// must return quickly. Never raised for a scan that was stopped, failed or
+    /// was superseded (DBD exited, the Global preset hotkey), nor on startup or
+    /// any other transition.
+    /// </summary>
+    public event EventHandler<MapDetectedEventArgs>? MapDetected;
 
     public AppConfig Config => _configService.Config;
 
@@ -336,23 +393,59 @@ public sealed class AppController : IDisposable
         {
             lock (_gate)
             {
+                return BlockedShortcutsNoticeLocked(BlockedShortcutsLocked());
+            }
+        }
+    }
+
+    /// <summary>
+    /// <see cref="NamesNeedingDbdRestart"/>, <see cref="NamesWaitingForReshadeIni"/> and
+    /// <see cref="BlockedShortcutsNotice"/> together, worked out once (a UI refresh needs all three).
+    /// </summary>
+    public BlockedPresetShortcuts BlockedPresetShortcuts
+    {
+        get
+        {
+            lock (_gate)
+            {
                 BlockedShortcuts blocked = BlockedShortcutsLocked();
-                if (blocked.WaitForIni.Count > 0)
+                return new BlockedPresetShortcuts(blocked.NeedRestart, blocked.WaitForIni, BlockedShortcutsNoticeLocked(blocked));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The preset file the manual override forces (the realm's preset, else the Global preset); null outside an
+    /// override or when neither is set. Compare it with <see cref="ActivePresetPath"/> to tell whether it is on yet.
+    /// </summary>
+    public string? OverridePresetPath
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_overrideRealm is null)
                 {
-                    bool one = blocked.WaitForIni.Count == 1;
-                    return $"{MissingReshadeIniTextLocked()}, so ReShade can't load the preset shortcut{(one ? string.Empty : "s")} " +
-                           $"for: {string.Join(", ", blocked.WaitForIni)}. Set the right ReShade.ini under Settings, " +
-                           $"then restart Dead by Daylight. Until then {(one ? "it" : "they")} can't be switched to.";
+                    return null;
                 }
 
-                if (blocked.NeedRestart.Count > 0)
-                {
-                    bool one = blocked.NeedRestart.Count == 1;
-                    return $"Restart Dead by Daylight so ReShade loads the new preset shortcut{(one ? string.Empty : "s")} " +
-                           $"for: {string.Join(", ", blocked.NeedRestart)}. Until then {(one ? "it" : "they")} can't be switched to.";
-                }
+                string? path = _decisions.DecideManualOverride(_overrideRealm, Config).PresetPath;
+                return string.IsNullOrWhiteSpace(path) ? null : path;
+            }
+        }
+    }
 
-                return null;
+    /// <summary>
+    /// Why the last save of the settings failed ("Could not save settings: …"); null when it worked. A settings
+    /// change that saves (e.g. <see cref="SetDebug"/>) shows a failure on the status line too.
+    /// </summary>
+    public string? LastSaveError
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastSaveError;
             }
         }
     }
@@ -361,6 +454,119 @@ public sealed class AppController : IDisposable
     public int SettingsResetCount => Volatile.Read(ref _settingsResetCount);
 
     public string? HotkeyError => _hotkeyError;
+
+    /// <summary>The Global preset hotkey ("Switch to Global preset"); null when cleared (disabled).</summary>
+    public DetectionHotkeyConfig? GlobalHotkey => Config.GlobalHotkey;
+
+    /// <summary>
+    /// Why the Global preset hotkey is not registered (e.g. another program holds
+    /// it, or it is the detection hotkey's combo); null while it works or is cleared.
+    /// </summary>
+    public string? GlobalHotkeyError => _globalHotkeyError;
+
+    /// <summary>
+    /// Completes once every Global preset hotkey press received so far has been
+    /// handled (presses are queued off the hotkey's pump thread and run one at a
+    /// time on the thread pool). Never faults. For tests and tools.
+    /// </summary>
+    public Task GlobalHotkeyPressesHandled
+    {
+        get
+        {
+            lock (_globalPressLock)
+            {
+                return _globalPresses;
+            }
+        }
+    }
+
+    /// <summary>
+    /// True while a scan runs but reads nothing because Dead by Daylight is not
+    /// in front (the scan is paused; it resumes by itself once DBD is back).
+    /// </summary>
+    public bool IsScanPaused
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _detectionInFlight && _scanPauseNotice is not null && _states.State == AppState.DetectingLoadingScreen;
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when ReShade.ini was seen holding <see cref="ActivePresetPath"/> after
+    /// the app switched to it ("confirmed by ReShade"); false while unknown.
+    /// </summary>
+    public bool IsActivePresetConfirmed
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _activePresetPath is not null && _activePresetConfirmed;
+            }
+        }
+    }
+
+    /// <summary>The last recorded preset-switch attempt (null: none yet). See <see cref="LastActivationText"/>.</summary>
+    public ActivationAttempt? LastActivation => _lastActivation;
+
+    /// <summary>
+    /// The Test switch (<see cref="TestRealmPreset"/> / <see cref="TestGlobalPreset"/>)
+    /// that is still waiting for DBD focus, with the time it has left; null when
+    /// no Test is pending (it was sent, superseded, failed or gave up).
+    /// </summary>
+    public PendingTest? PendingTest
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_desired is not { Origin: ActivationOrigin.Test } request)
+                {
+                    return null;
+                }
+
+                TimeSpan left = request.DeadlineMs is long deadline
+                    ? TimeSpan.FromMilliseconds(Math.Max(0, deadline - _clockMs()))
+                    : TestFocusWindow;
+                return new PendingTest(request.ShortcutName, request.Name, left, request.Serial);
+            }
+        }
+    }
+
+    /// <summary>
+    /// How the newest Test that ended by itself ended (sent, failed, or gave up waiting for DBD focus), with that Test's
+    /// <see cref="PendingTest.Serial"/>; null before any. A Test that something else superseded (a scan, another
+    /// switch, DBD closing) leaves no outcome: compare the serial to tell.
+    /// </summary>
+    public TestOutcome? LastTestOutcome
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastTestOutcome;
+            }
+        }
+    }
+
+    /// <summary>Whether the UI plays its animations (Settings → Animations).</summary>
+    public bool AnimationsEnabled => Config.AnimationsEnabled;
+
+    /// <summary>Whether the Great skill-check sound plays when a map is found (Settings → Sound).</summary>
+    public bool SoundEnabled => Config.SoundEnabled;
+
+    /// <summary>The Great skill-check sound volume, 0..1 (Settings → Sound; 0.5 on first run).</summary>
+    public double SoundVolume => Config.SoundVolume;
+
+    /// <summary>
+    /// The app's sound effects. <see cref="ISoundEffects.PlayGreat"/> plays at
+    /// any volume, whatever the settings; <see cref="PlayGreatSound"/> applies them.
+    /// </summary>
+    public ISoundEffects SoundEffects => _soundEffects;
 
     public string DebugDirectory =>
         Path.Combine(AppConfigService.DefaultAppDirectory(), "debug-crops");
@@ -379,6 +585,7 @@ public sealed class AppController : IDisposable
         _states.StateChanged += (_, _) => RaiseChanged();
         _dbd.StatusChanged += (_, e) => OnDbdStatus(e);
         _hotkey.HotkeyPressed += (_, _) => _ = OnDetectionHotkeyAsync();
+        _globalHotkey.HotkeyPressed += (_, _) => QueueGlobalHotkeyPress(); // returns at once; presses run in order
         _lifecycle.PhaseChanged += (_, p) => OnLifecyclePhase(p);
         _detector.SampleEvaluated += (_, info) => OnSampleEvaluated(info);
 
@@ -423,7 +630,7 @@ public sealed class AppController : IDisposable
             _initialized = true;
         }
 
-        RegisterHotkey(appendToStatus: true); // a hotkey problem must not hide the startup status
+        RegisterHotkey(appendToStatus: true); // both hotkeys; a problem must not hide the startup status
 
         // Only frames of DBD itself count: while another window is in front the
         // screen capture would show that window, so the lifecycle skips them.
@@ -448,6 +655,7 @@ public sealed class AppController : IDisposable
 
         _dbd.Stop();
         _hotkey.Stop();
+        _globalHotkey.Stop();
         _lifecycle.Stop(); // no controller lock held: an in-flight handler can finish
         CancelScan();
 
@@ -520,6 +728,12 @@ public sealed class AppController : IDisposable
                 // reports "stopped" and returns to Ready.
                 toStop = _scanCts;
                 _scanCts = null;
+                if (toStop is null)
+                {
+                    // Already told to stop (the Global preset hotkey took over, or DBD
+                    // restarted); it ends within a moment, then a new scan can start.
+                    SetStatusLocked($"The previous scan is still stopping — press {hotkey} again in a moment.");
+                }
             }
             else if (!_dbd.IsRunning)
             {
@@ -578,13 +792,15 @@ public sealed class AppController : IDisposable
 
             ActivationRequest? request = null;
             long armTicket = 0;
+            MapDetectedEventArgs? detected = null;
             lock (_gate)
             {
                 _lastDetection = result;
                 if (_disposed || _shutdownCts.IsCancellationRequested ||
                     _states.State != AppState.DetectingLoadingScreen)
                 {
-                    // DBD exited (or we are shutting down) while scanning; that path owns the state.
+                    // DBD exited, the Global preset hotkey took over (or we are shutting
+                    // down) while scanning; that path owns the state and the switch.
                     // Shutting down: never request a switch as a side effect of quitting.
                 }
                 else if (result.WasStopped)
@@ -596,6 +812,7 @@ public sealed class AppController : IDisposable
                 else if (result.Success && !string.IsNullOrWhiteSpace(result.RealmName))
                 {
                     request = AcceptDetectionLocked(result, out armTicket);
+                    detected = new MapDetectedEventArgs(result.RealmName!, result.MapName, result.Confidence);
                 }
                 else
                 {
@@ -603,6 +820,11 @@ public sealed class AppController : IDisposable
                     _detectionText = "No confident map detected";
                     request = RequestGlobalAfterScanLocked(DescribeScanFailure(result));
                 }
+            }
+
+            if (detected is not null)
+            {
+                RaiseMapDetected(detected); // first: the UI lands the skill check and plays the sound
             }
 
             if (armTicket != 0)
@@ -1132,6 +1354,13 @@ public sealed class AppController : IDisposable
     {
         _statusMessage = message;
         _statusOwner = request;
+        if (request.Origin == ActivationOrigin.Test && !ReferenceEquals(_desired, request))
+        {
+            // a Test that is no longer the target says how it ended (sent, failed, gave up): its outcome. (Its waiting
+            // and retry texts are written while it still is the target; a Test superseded by something else writes
+            // nothing more.)
+            _lastTestOutcome = new TestOutcome(request.ShortcutName, request.Serial, message);
+        }
     }
 
     private bool IsCurrentLocked(ActivationRequest request) =>
@@ -1724,6 +1953,148 @@ public sealed class AppController : IDisposable
         }
     }
 
+    // ---------- Global preset hotkey ----------
+
+    /// <summary>
+    /// The Global preset hotkey's handler, on the hotkey's pump thread: queues
+    /// the press and returns at once, so registering or releasing a hotkey (which
+    /// joins that thread) never waits for a switch in progress (a ReShade.ini read
+    /// on a sleeping disk, a send waiting for another one). Presses run one at a
+    /// time, in order, on the thread pool; a press that arrives while an earlier
+    /// one is still waiting to start is folded into it (it would do the same).
+    /// </summary>
+    private void QueueGlobalHotkeyPress()
+    {
+        lock (_globalPressLock)
+        {
+            if (_globalPressWaiting)
+            {
+                return;
+            }
+
+            _globalPressWaiting = true;
+
+            // Not ExecuteSynchronously: the press always runs on the pool, never here.
+            _globalPresses = _globalPresses.ContinueWith(
+                _ => RunQueuedGlobalHotkeyPress(),
+                CancellationToken.None,
+                TaskContinuationOptions.DenyChildAttach,
+                TaskScheduler.Default);
+        }
+    }
+
+    private void RunQueuedGlobalHotkeyPress()
+    {
+        lock (_globalPressLock)
+        {
+            _globalPressWaiting = false; // from now on a new press queues behind this one
+        }
+
+        try
+        {
+            ActivateGlobalNow(fromHotkey: true);
+        }
+        catch
+        {
+            // Never fault the queue: later presses must still run.
+        }
+    }
+
+    /// <summary>
+    /// "Switch to Global preset": the Global preset hotkey (F9 by default; it
+    /// calls this with <paramref name="fromHotkey"/> true), or a UI button (the
+    /// default: the texts then say the Global preset was requested, not that a
+    /// key was pressed). With DBD running and a Global preset set: a running scan
+    /// is cancelled without its own "scan ended without a read → Global" request
+    /// (it would double up), the pending target, the manual override and the
+    /// match tracking are dropped (the lifecycle is disarmed, so no match-end
+    /// restore follows), the state becomes <see cref="AppState.Ready"/>, and
+    /// Global is requested through the focus-aware pipeline (sent at once while
+    /// DBD is focused, the usual case for a hotkey pressed in game; otherwise
+    /// within <see cref="GlobalHotkeyFocusWindow"/>). Status: "Switched to the
+    /// Global preset (F9)." (the configured key; "Switched to the Global preset."
+    /// from a button), or the pipeline's waiting/failure text, prefixed with
+    /// "F9 pressed." or "Global preset requested.". Otherwise only the status says
+    /// why nothing happened. Runs on the calling thread (it may read ReShade.ini
+    /// and send keys); never call with a controller lock held.
+    /// </summary>
+    /// <param name="fromHotkey">True for a press of the Global preset hotkey; false (the default) for any other request, e.g. a UI button.</param>
+    public void ActivateGlobalNow(bool fromHotkey = false)
+    {
+        CancellationTokenSource? scanToStop = null;
+        long disarmTicket = 0;
+        ActivationRequest? request = null;
+        lock (_gate)
+        {
+            if (_disposed || _shutdownCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            string? global = Config.GlobalPresetPath;
+            if (!_dbd.IsRunning || !_initialized || _states.State == AppState.WaitingForDbd)
+            {
+                // WaitingForDbd while the monitor already sees the process: its
+                // status event (discovery, sync, shortcut snapshot) owns the state.
+                SetStatusLocked("Dead by Daylight is not running.");
+            }
+            else if (string.IsNullOrWhiteSpace(global))
+            {
+                SetStatusLocked("No Global / Menu preset is set — choose one under Presets.");
+            }
+            else
+            {
+                // (1) The scan's own result handling skips once the state has left
+                // DetectingLoadingScreen (below), so it requests nothing.
+                scanToStop = _scanCts;
+                _scanCts = null;
+                _scanPauseNotice = null;
+
+                // (2) Nothing pending, no override, the match no longer tracked.
+                ClearDesiredLocked();
+                _overrideRealm = null;
+                disarmTicket = NextLifecycleTicketLocked();
+
+                // (4) Every state with DBD running may go to Ready.
+                _states.TryTransitionTo(AppState.Ready);
+                SetReadyTextLocked();
+
+                // (3) + (5). The key is named only for a press of it (a cleared
+                // hotkey's queued press, too, reads as a plain request).
+                string? key = fromHotkey ? Config.GlobalHotkey?.ToString() : null;
+                string keySuffix = key is null ? string.Empty : $" ({key})";
+                var hotkeyRequest = new ActivationRequest(
+                    key is null ? ActivationOrigin.GlobalRequest : ActivationOrigin.Hotkey,
+                    global,
+                    AppConfigKeys.GlobalShortcutKey,
+                    realm: null,
+                    what: key is null ? "Switch to Global →" : $"Global preset hotkey{keySuffix} →",
+                    context: key is null ? "Global preset requested." : $"{key} pressed.",
+                    successMessage: $"Switched to the Global preset{keySuffix}.",
+                    window: GlobalHotkeyFocusWindow,
+                    deadlineMs: DeadlineAfter(GlobalHotkeyFocusWindow));
+                SetDesiredLocked(hotkeyRequest);
+                SetRequestStatusLocked(hotkeyRequest, $"Switching to the Global preset{keySuffix}…");
+                request = hotkeyRequest;
+            }
+        }
+
+        CancelQuietly(scanToStop);
+        if (disarmTicket != 0)
+        {
+            ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
+        }
+
+        if (request is not null)
+        {
+            Attempt(request); // immediate try: DBD is usually focused when the hotkey is pressed
+        }
+        else
+        {
+            RaiseChanged();
+        }
+    }
+
     // ---------- Preset management ----------
 
     /// <summary>
@@ -1777,7 +2148,10 @@ public sealed class AppController : IDisposable
             context: string.Empty,
             successMessage: $"Test: switched to {name}.",
             window: TestFocusWindow,
-            deadlineMs: DeadlineAfter(TestFocusWindow));
+            deadlineMs: DeadlineAfter(TestFocusWindow))
+        {
+            Serial = ++_testSerial,
+        };
         if (_desired is { Origin: ActivationOrigin.Detected } && _states.State == AppState.WaitingForGameplay)
         {
             _states.TryTransitionTo(AppState.Ready); // the test replaces the pending detected preset
@@ -1912,41 +2286,59 @@ public sealed class AppController : IDisposable
     /// Changes the detection hotkey. The new hotkey is registered FIRST and
     /// saved only when that worked; otherwise the previous one stays (it is
     /// registered again if it had to be released) and the error is returned.
+    /// The Global preset hotkey's combo is refused, and so is any of the app's
+    /// ReShade shortcut combos (<see cref="HotkeyParser.IsReshadeShortcutCombo"/>:
+    /// the hotkey would swallow the app's own preset switches). Ends a capture
+    /// (<see cref="SuspendHotkey"/>): the Global preset hotkey is registered
+    /// again too, as it is after a change that frees its combo.
     /// </summary>
     public string? UpdateHotkey(DetectionHotkeyConfig hotkey)
     {
         ArgumentNullException.ThrowIfNull(hotkey);
         var requested = CopyHotkey(hotkey);
         DetectionHotkeyConfig previous;
+        bool resumeGlobal;
+        string? error;
         lock (_gate)
         {
             previous = Config.DetectionHotkey;
+            resumeGlobal = _hotkeySuspended;
+            _hotkeySuspended = false;
+            error = DetectionHotkeyConflictLocked(requested, previous);
         }
 
         // Never under _gate: Start/Stop join the pump thread, whose handler takes it.
-        string? error = _hotkey.Start(requested);
+        error ??= _hotkey.Start(requested);
         if (error is not null)
         {
-            // A parse error leaves the previous registration in place; a failed
-            // registration already released it to make room.
-            string? restoreError = IsRegistered(previous) ? null : _hotkey.Start(previous);
+            // A parse error (or a refused combo) leaves the previous registration
+            // in place; a failed registration already released it to make room.
+            // The configured (previous) hotkey is checked again before it is
+            // registered: one that may not be registered stays released.
+            string? restoreError = null;
+            if (!IsRegistered(_hotkey, previous))
+            {
+                RegisterDetectionHotkeyCore(out restoreError);
+            }
+
+            string? globalProblem = resumeGlobal ? RegisterGlobalHotkeyCore() : null;
             lock (_gate)
             {
-                _hotkeySuspended = false;
                 _hotkeyError = restoreError;
-                SetStatusLocked(restoreError is null
+                SetStatusLocked(WithSentences(restoreError is null
                     ? $"Hotkey '{requested}' unavailable: {error} {previous} is still the detection hotkey."
                     : $"Hotkey '{requested}' unavailable: {error} The previous hotkey {previous} " +
-                      $"could not be registered again either: {restoreError}");
+                      $"could not be registered again either: {restoreError}", globalProblem));
             }
 
             RaiseChanged();
             return error;
         }
 
+        string? saveError;
+        DetectionHotkeyConfig? global;
         lock (_gate)
         {
-            _hotkeySuspended = false;
             _hotkeyError = null;
             Config.DetectionHotkey = requested;
             if (_states.State == AppState.Ready)
@@ -1954,7 +2346,18 @@ public sealed class AppController : IDisposable
                 SetReadyTextLocked();
             }
 
-            SetStatusLocked(WithSentences($"Detection hotkey: {requested}.", TrySaveLocked()));
+            saveError = TrySaveLocked();
+            global = Config.GlobalHotkey;
+        }
+
+        // Also when the Global preset hotkey is set but not registered: e.g. it
+        // was the old detection hotkey's combo (a config from before 1.2 with F9
+        // as its detection hotkey), which the change may just have freed.
+        bool registerGlobal = resumeGlobal || (global is not null && !IsRegistered(_globalHotkey, global));
+        string? globalProblemAfter = registerGlobal ? RegisterGlobalHotkeyCore() : null;
+        lock (_gate)
+        {
+            SetStatusLocked(WithSentences($"Detection hotkey: {requested}.", saveError, globalProblemAfter));
         }
 
         RaiseChanged();
@@ -1962,8 +2365,131 @@ public sealed class AppController : IDisposable
     }
 
     /// <summary>
-    /// Releases the global hotkey while the UI captures a new one: a registered
-    /// hotkey is swallowed by Windows, so the window would never see the key.
+    /// Changes the Global preset hotkey, like <see cref="UpdateHotkey"/>: the new
+    /// hotkey is registered FIRST and saved only when that worked; otherwise the
+    /// previous one stays (registered again if it had to be released; none when
+    /// it was cleared), <see cref="GlobalHotkeyError"/> says whether that
+    /// worked, and the error is returned. The detection hotkey's combo is
+    /// refused, and so is any of the app's ReShade shortcut combos
+    /// (<see cref="HotkeyParser.IsReshadeShortcutCombo"/>: a press of the
+    /// Global preset's own combo would trigger the hotkey again and again); the
+    /// rules are the same (F1–F24 alone, letters, digits and NumPad keys with
+    /// Ctrl, Alt or Shift). Ends a capture (<see cref="SuspendHotkey"/>): the
+    /// detection hotkey is registered again too.
+    /// </summary>
+    public string? UpdateGlobalHotkey(DetectionHotkeyConfig hotkey)
+    {
+        ArgumentNullException.ThrowIfNull(hotkey);
+        var requested = CopyHotkey(hotkey);
+        DetectionHotkeyConfig? previous;
+        bool resumeDetection;
+        string? error = null;
+        lock (_gate)
+        {
+            previous = Config.GlobalHotkey;
+            resumeDetection = _hotkeySuspended;
+            _hotkeySuspended = false;
+            if (HotkeyParser.IsReshadeShortcutCombo(requested, Config.ReshadeShortcuts.Values))
+            {
+                error = HotkeyParser.ReservedForReshadeError(requested);
+            }
+            else if (HotkeyParser.SameCombo(requested, Config.DetectionHotkey))
+            {
+                error = $"{requested} is already the detection hotkey.";
+            }
+        }
+
+        // Never under _gate (see the lock order).
+        error ??= _globalHotkey.Start(requested);
+        if (error is not null)
+        {
+            // The configured (previous) hotkey is checked again before it is
+            // registered: one that may not be registered stays released.
+            string? restoreError = null;
+            if (previous is null)
+            {
+                _globalHotkey.Stop(); // it was cleared: nothing stays registered
+            }
+            else if (!IsRegistered(_globalHotkey, previous))
+            {
+                RegisterGlobalHotkeyCore(out restoreError);
+            }
+
+            string? detectionProblem = resumeDetection ? RegisterDetectionHotkeyCore() : null;
+            lock (_gate)
+            {
+                _globalHotkeyError = restoreError;
+                string still = previous is null
+                    ? "The Global preset still has no hotkey."
+                    : restoreError is null
+                        ? $"{previous} is still the Global preset hotkey."
+                        : $"The previous hotkey {previous} could not be registered again either: {restoreError}";
+                SetStatusLocked(WithSentences(
+                    $"Hotkey '{requested}' unavailable for the Global preset: {error} {still}", detectionProblem));
+            }
+
+            RaiseChanged();
+            return error;
+        }
+
+        string? saveError;
+        lock (_gate)
+        {
+            _globalHotkeyError = null;
+            Config.GlobalHotkey = requested;
+            saveError = TrySaveLocked();
+        }
+
+        string? detectionProblemAfter = resumeDetection ? RegisterDetectionHotkeyCore() : null;
+        lock (_gate)
+        {
+            SetStatusLocked(WithSentences($"Global preset hotkey: {requested}.", saveError, detectionProblemAfter));
+        }
+
+        RaiseChanged();
+        return null;
+    }
+
+    /// <summary>
+    /// Disables the Global preset hotkey: it is released first, then saved as
+    /// cleared (an explicit null, so it stays off after an upgrade). Ends a
+    /// capture (<see cref="SuspendHotkey"/>): the detection hotkey is registered again.
+    /// </summary>
+    public void ClearGlobalHotkey()
+    {
+        bool resumeDetection;
+        lock (_gate)
+        {
+            resumeDetection = _hotkeySuspended;
+            _hotkeySuspended = false;
+        }
+
+        _globalHotkey.Stop(); // never under _gate
+        string? saveError;
+        lock (_gate)
+        {
+            _globalHotkeyError = null;
+            Config.GlobalHotkey = null;
+            saveError = TrySaveLocked();
+        }
+
+        string? detectionProblem = resumeDetection ? RegisterDetectionHotkeyCore() : null;
+        lock (_gate)
+        {
+            SetStatusLocked(WithSentences("Global preset hotkey cleared.", saveError, detectionProblem));
+        }
+
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// Releases BOTH global hotkeys (detection and Global preset) while the UI
+    /// captures a new one for either: a registered hotkey is swallowed by
+    /// Windows, so the window would never see the key (and pressing the other
+    /// one would switch presets mid-capture). The capture ends with
+    /// <see cref="UpdateHotkey"/>, <see cref="UpdateGlobalHotkey"/>,
+    /// <see cref="ClearGlobalHotkey"/> or <see cref="ResumeHotkey"/>, which
+    /// register both again.
     /// </summary>
     public void SuspendHotkey()
     {
@@ -1978,9 +2504,10 @@ public sealed class AppController : IDisposable
         }
 
         _hotkey.Stop();
+        _globalHotkey.Stop();
     }
 
-    /// <summary>Registers the configured hotkey again after a cancelled capture (see <see cref="SuspendHotkey"/>).</summary>
+    /// <summary>Registers both configured hotkeys again after a cancelled capture (see <see cref="SuspendHotkey"/>).</summary>
     public void ResumeHotkey()
     {
         lock (_gate)
@@ -2039,6 +2566,116 @@ public sealed class AppController : IDisposable
         }
 
         RaiseChanged();
+    }
+
+    /// <summary>Turns the UI animations on or off (saved; a save failure is shown on the status line).</summary>
+    public void SetAnimationsEnabled(bool enabled)
+    {
+        lock (_gate)
+        {
+            if (Config.AnimationsEnabled == enabled)
+            {
+                return;
+            }
+
+            Config.AnimationsEnabled = enabled;
+            SaveOrReportLocked();
+        }
+
+        RaiseChanged();
+    }
+
+    /// <summary>Turns the Great skill-check sound on or off (saved; a save failure is shown on the status line).</summary>
+    public void SetSoundEnabled(bool enabled)
+    {
+        lock (_gate)
+        {
+            if (Config.SoundEnabled == enabled)
+            {
+                return;
+            }
+
+            Config.SoundEnabled = enabled;
+            SaveOrReportLocked();
+        }
+
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// Sets the Great skill-check sound volume, clamped to 0..1 (NaN is
+    /// ignored). Saved when it changed (a save failure is shown on the status
+    /// line), so a slider should call it when the value settles, not per pixel.
+    /// </summary>
+    public void SetSoundVolume(double volume)
+    {
+        if (double.IsNaN(volume))
+        {
+            return;
+        }
+
+        double clamped = Math.Clamp(volume, 0.0, 1.0);
+        lock (_gate)
+        {
+            if (Config.SoundVolume.Equals(clamped))
+            {
+                return;
+            }
+
+            Config.SoundVolume = clamped;
+            SaveOrReportLocked();
+        }
+
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// Plays the Great skill-check sound at the configured <see cref="SoundVolume"/>
+    /// when <see cref="SoundEnabled"/> (map found, or the Settings preview).
+    /// Returns whether it started; false when the sound is off, the volume is 0,
+    /// or playback failed. Never throws; any thread.
+    /// </summary>
+    public bool PlayGreatSound()
+    {
+        bool enabled;
+        double volume;
+        lock (_gate)
+        {
+            enabled = Config.SoundEnabled;
+            volume = Config.SoundVolume;
+        }
+
+        if (!enabled || !(volume > 0))
+        {
+            return false;
+        }
+
+        try
+        {
+            return _soundEffects.PlayGreat(volume);
+        }
+        catch
+        {
+            return false; // a sound must never break the caller
+        }
+    }
+
+    /// <summary>
+    /// Why the Great skill-check sound can't play whatever the settings (e.g. its
+    /// asset is missing from the build), or null when it can. Loads the sound if
+    /// that was not tried yet. Never throws; any thread. Shown by
+    /// <see cref="RunReshadeDiagnostics"/>.
+    /// </summary>
+    public string? GreatSoundProblem()
+    {
+        try
+        {
+            return _soundEffects.GreatSoundProblem();
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
     }
 
     /// <summary>
@@ -2116,7 +2753,8 @@ public sealed class AppController : IDisposable
     /// <summary>
     /// Resets the app to defaults: removes this app's entries from ReShade.ini
     /// (best effort, the user's own shortcuts stay), resets the config,
-    /// re-runs discovery, registers the default hotkey and resets the runtime
+    /// re-runs discovery, registers both default hotkeys (detection F8, Global
+    /// preset F9) and resets the runtime
     /// state (no scan, no pending switch, match not tracked).
     /// </summary>
     public void ResetSettings()
@@ -2168,7 +2806,7 @@ public sealed class AppController : IDisposable
         CancelQuietly(scanToStop);
         ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
 
-        // (4) The default hotkey (re-registering the same combo is safe). A
+        // (4) The default hotkeys (re-registering the same combo is safe). A
         // registration problem is added to the reset status, never replaces it.
         RegisterHotkey(appendToStatus: true);
         RaiseChanged();
@@ -2336,13 +2974,24 @@ public sealed class AppController : IDisposable
                 "Run both the same way (preferably both normally, not as admin).";
         }
 
+        string? soundProblem = GreatSoundProblem();
+        string soundLine = soundProblem is not null
+            ? $"Great sound: unavailable — {soundProblem}"
+            : config.SoundEnabled
+                ? $"Great sound: OK (volume {Math.Round(config.SoundVolume * 100, MidpointRounding.AwayFromZero)} %)"
+                : "Great sound: OK (turned off under Settings)";
+
         return report + Environment.NewLine + string.Join(Environment.NewLine, new[]
         {
             string.Empty,
             $"DBD running: {(DbdRunning ? "yes" : "no")}, focused: {(focused ? "yes" : "no")}",
             loadedLine,
             integrityLine,
-            $"Detection hotkey: {Config.DetectionHotkey}",
+            $"Detection hotkey: {config.DetectionHotkey}" +
+                (_hotkeyError is { } detectionError ? $" — unavailable: {detectionError}" : string.Empty),
+            $"Global preset hotkey: {(config.GlobalHotkey is { } globalKey ? globalKey.ToString() : "not set")}" +
+                (_globalHotkeyError is { } globalError ? $" — unavailable: {globalError}" : string.Empty),
+            soundLine,
             $"Last activation: {LastActivationText}",
             $"Overall: {(allOk ? "setup looks correct" : "problems found — see [!!] lines")}"
         });
@@ -2359,28 +3008,27 @@ public sealed class AppController : IDisposable
     }
 
     /// <summary>
-    /// (Re-)registers the configured hotkey. A failure is shown on the banner
-    /// (<see cref="HotkeyError"/>) and on the status line: added after what
-    /// the status says when <paramref name="appendToStatus"/> (startup, reset:
-    /// their own news, e.g. a ReShade.ini problem, must stay visible), else in
-    /// its place. Never call with _gate held (see the lock order).
+    /// (Re-)registers both configured hotkeys: the detection hotkey, then the
+    /// Global preset hotkey (released first, so the detection hotkey can take a
+    /// combo it held, e.g. after a reset). A failure is shown on the banner
+    /// (<see cref="HotkeyError"/>, <see cref="GlobalHotkeyError"/>) and on the
+    /// status line: added after what the status says when <paramref name="appendToStatus"/>
+    /// (startup, reset: their own news, e.g. a ReShade.ini problem, must stay
+    /// visible), else in its place. Never call with _gate held (see the lock order).
     /// </summary>
     private void RegisterHotkey(bool appendToStatus = false)
     {
-        DetectionHotkeyConfig hotkey;
         lock (_gate)
         {
-            hotkey = Config.DetectionHotkey;
             _hotkeySuspended = false;
         }
 
-        string? error = _hotkey.Start(hotkey);
-        lock (_gate)
+        _globalHotkey.Stop();
+        string? problem = JoinSentences(RegisterDetectionHotkeyCore(), RegisterGlobalHotkeyCore());
+        if (problem is not null)
         {
-            _hotkeyError = error ?? _hotkey.LastError;
-            if (_hotkeyError is not null)
+            lock (_gate)
             {
-                string problem = $"Hotkey '{hotkey}' unavailable: {_hotkeyError}";
                 SetStatusLocked(appendToStatus ? WithSentences(_statusMessage, problem) : problem);
             }
         }
@@ -2388,8 +3036,134 @@ public sealed class AppController : IDisposable
         RaiseChanged();
     }
 
-    private bool IsRegistered(DetectionHotkeyConfig hotkey) =>
-        _hotkey.RegisteredHotkey is { } registered &&
+    /// <summary>
+    /// Why <paramref name="requested"/> can't become the detection hotkey before
+    /// any registration is tried, or null: one of the app's ReShade shortcut
+    /// combos, or the Global preset hotkey's combo (unless it is the detection
+    /// hotkey already: a config from before 1.2 with F9 as its detection hotkey
+    /// keeps F9, its Global preset hotkey stays unregistered). Call with _gate held.
+    /// </summary>
+    private string? DetectionHotkeyConflictLocked(DetectionHotkeyConfig requested, DetectionHotkeyConfig current)
+    {
+        if (HotkeyParser.IsReshadeShortcutCombo(requested, Config.ReshadeShortcuts.Values))
+        {
+            return HotkeyParser.ReservedForReshadeError(requested);
+        }
+
+        if (HotkeyParser.SameCombo(requested, Config.GlobalHotkey) && !HotkeyParser.SameCombo(requested, current))
+        {
+            return $"{requested} is already the Global preset hotkey.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Registers the configured detection hotkey and records the outcome in
+    /// <see cref="HotkeyError"/>. Returns the user-facing problem, or null.
+    /// Never call with _gate held.
+    /// </summary>
+    private string? RegisterDetectionHotkeyCore() => RegisterDetectionHotkeyCore(out _);
+
+    /// <summary>
+    /// Registers the configured detection hotkey (released instead when it is
+    /// one of the app's ReShade shortcut combos, see
+    /// <see cref="HotkeyParser.IsReshadeShortcutCombo"/>) and records the outcome
+    /// in <see cref="HotkeyError"/> (also returned as <paramref name="error"/>).
+    /// Returns the user-facing problem, or null. Never call with _gate held.
+    /// </summary>
+    private string? RegisterDetectionHotkeyCore(out string? error)
+    {
+        DetectionHotkeyConfig hotkey;
+        bool reserved;
+        lock (_gate)
+        {
+            hotkey = Config.DetectionHotkey;
+            reserved = HotkeyParser.IsReshadeShortcutCombo(hotkey, Config.ReshadeShortcuts.Values);
+        }
+
+        string? registrationError;
+        if (reserved)
+        {
+            _hotkey.Stop(); // it would swallow the app's own preset switches
+            registrationError = HotkeyParser.ReservedForReshadeError(hotkey);
+        }
+        else
+        {
+            registrationError = _hotkey.Start(hotkey);
+        }
+
+        lock (_gate)
+        {
+            _hotkeyError = registrationError ?? _hotkey.LastError;
+            error = _hotkeyError;
+            return _hotkeyError is null ? null : $"Hotkey '{hotkey}' unavailable: {_hotkeyError}";
+        }
+    }
+
+    /// <summary>
+    /// Registers the configured Global preset hotkey and records the outcome in
+    /// <see cref="GlobalHotkeyError"/>. Returns the user-facing problem, or
+    /// null. Never call with _gate held.
+    /// </summary>
+    private string? RegisterGlobalHotkeyCore() => RegisterGlobalHotkeyCore(out _);
+
+    /// <summary>
+    /// Registers the configured Global preset hotkey (releases it when cleared,
+    /// invalid, one of the app's ReShade shortcut combos, or the detection
+    /// hotkey's combo) and records the outcome in <see cref="GlobalHotkeyError"/>
+    /// (also returned as <paramref name="error"/>). Returns the user-facing
+    /// problem, or null. Never call with _gate held.
+    /// </summary>
+    private string? RegisterGlobalHotkeyCore(out string? error)
+    {
+        DetectionHotkeyConfig? hotkey;
+        DetectionHotkeyConfig detection;
+        bool reserved;
+        lock (_gate)
+        {
+            hotkey = Config.GlobalHotkey;
+            detection = Config.DetectionHotkey;
+            reserved = HotkeyParser.IsReshadeShortcutCombo(hotkey, Config.ReshadeShortcuts.Values);
+        }
+
+        error = null;
+        if (hotkey is null)
+        {
+            _globalHotkey.Stop();
+        }
+        else if (reserved)
+        {
+            // A press of the Global preset's own combo would trigger it again and
+            // again; a realm's combo would land on Global instead of the realm.
+            _globalHotkey.Stop();
+            error = HotkeyParser.ReservedForReshadeError(hotkey);
+        }
+        else if (HotkeyParser.SameCombo(hotkey, detection))
+        {
+            _globalHotkey.Stop();
+            error = $"{hotkey} is also the detection hotkey; choose another key for the Global preset.";
+        }
+        else if (!HotkeyParser.TryParse(hotkey, out _, out _, out string? parseError))
+        {
+            _globalHotkey.Stop(); // an invalid hotkey registers nothing (not the previous one either)
+            error = parseError ?? $"Unsupported hotkey '{hotkey}'.";
+        }
+        else
+        {
+            error = _globalHotkey.Start(hotkey) ?? _globalHotkey.LastError;
+        }
+
+        lock (_gate)
+        {
+            _globalHotkeyError = error;
+        }
+
+        return error is null ? null : $"Global preset hotkey '{hotkey}' unavailable: {error}";
+    }
+
+    private static bool IsRegistered(IGlobalHotkeyService service, DetectionHotkeyConfig hotkey) =>
+        service.RegisteredHotkey is { } registered &&
         string.Equals(registered.Key, hotkey.Key, StringComparison.OrdinalIgnoreCase) &&
         registered.Ctrl == hotkey.Ctrl && registered.Shift == hotkey.Shift && registered.Alt == hotkey.Alt;
 
@@ -2556,6 +3330,27 @@ public sealed class AppController : IDisposable
     /// loaded, under what fixes it: a DBD restart (the configured ReShade.ini
     /// exists) or setting ReShade.ini first (it doesn't). Call with _gate held.
     /// </summary>
+    /// <summary>The banner text for <paramref name="blocked"/> (see <see cref="BlockedShortcutsNotice"/>). Call with _gate held.</summary>
+    private string? BlockedShortcutsNoticeLocked(BlockedShortcuts blocked)
+    {
+        if (blocked.WaitForIni.Count > 0)
+        {
+            bool one = blocked.WaitForIni.Count == 1;
+            return $"{MissingReshadeIniTextLocked()}, so ReShade can't load the preset shortcut{(one ? string.Empty : "s")} " +
+                   $"for: {string.Join(", ", blocked.WaitForIni)}. Set the right ReShade.ini under Settings, " +
+                   $"then restart Dead by Daylight. Until then {(one ? "it" : "they")} can't be switched to.";
+        }
+
+        if (blocked.NeedRestart.Count > 0)
+        {
+            bool one = blocked.NeedRestart.Count == 1;
+            return $"Restart Dead by Daylight so ReShade loads the new preset shortcut{(one ? string.Empty : "s")} " +
+                   $"for: {string.Join(", ", blocked.NeedRestart)}. Until then {(one ? "it" : "they")} can't be switched to.";
+        }
+
+        return null;
+    }
+
     private BlockedShortcuts BlockedShortcutsLocked()
     {
         var names = AssignedPresetsLocked()
@@ -2820,7 +3615,11 @@ public sealed class AppController : IDisposable
             DebugMode = c.DebugMode,
             DatabaseVersion = c.DatabaseVersion,
             DatabaseUpdateManifestUrl = c.DatabaseUpdateManifestUrl,
-            AutoRestoreGlobalOnMenu = c.AutoRestoreGlobalOnMenu
+            AutoRestoreGlobalOnMenu = c.AutoRestoreGlobalOnMenu,
+            GlobalHotkey = c.GlobalHotkey,
+            AnimationsEnabled = c.AnimationsEnabled,
+            SoundEnabled = c.SoundEnabled,
+            SoundVolume = c.SoundVolume
         };
     }
 
@@ -2833,11 +3632,13 @@ public sealed class AppController : IDisposable
         try
         {
             _configService.Save();
+            _lastSaveError = null;
             return null;
         }
         catch (Exception ex)
         {
-            return $"Could not save settings: {ex.Message}";
+            _lastSaveError = $"Could not save settings: {ex.Message}";
+            return _lastSaveError;
         }
     }
 
@@ -2850,10 +3651,13 @@ public sealed class AppController : IDisposable
         }
     }
 
-    /// <summary>Joins the non-blank sentences with spaces; null when there are none.</summary>
+    /// <summary>
+    /// Joins the non-blank sentences with spaces, each one once (a reset whose config could not be saved would
+    /// otherwise say the same save error twice); null when there are none.
+    /// </summary>
     private static string? JoinSentences(params string?[] sentences)
     {
-        string joined = string.Join(" ", sentences.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!.Trim()));
+        string joined = string.Join(" ", sentences.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!.Trim()).Distinct(StringComparer.Ordinal));
         return joined.Length == 0 ? null : joined;
     }
 
@@ -2869,6 +3673,19 @@ public sealed class AppController : IDisposable
         catch
         {
             // Subscribers must not break the controller.
+        }
+    }
+
+    /// <summary>Raises <see cref="MapDetected"/>. Never call with a controller lock held.</summary>
+    private void RaiseMapDetected(MapDetectedEventArgs args)
+    {
+        try
+        {
+            MapDetected?.Invoke(this, args);
+        }
+        catch
+        {
+            // Subscribers must not break the controller (or the switch that follows).
         }
     }
 
@@ -2903,7 +3720,13 @@ public sealed class AppController : IDisposable
         ReturnToAutomatic,
         Test,
         MatchEnd,
-        ScanWithoutResult
+        ScanWithoutResult,
+
+        /// <summary>The Global preset hotkey (<see cref="ActivateGlobalNow"/> from a press).</summary>
+        Hotkey,
+
+        /// <summary><see cref="ActivateGlobalNow"/> requested otherwise (e.g. a UI button).</summary>
+        GlobalRequest
     }
 
     private enum AttemptOutcome
@@ -2996,11 +3819,83 @@ public sealed class AppController : IDisposable
 
         public string? LastSendError { get; set; }
 
+        /// <summary>A Test's number (<see cref="PendingTest.Serial"/>); 0 for other requests.</summary>
+        public long Serial { get; init; }
+
         public bool Exhausted { get; set; }
 
         public bool WorkerRunning { get; set; }
+    }
+
+    /// <summary>
+    /// The Global preset hotkey when the host passes none (tests, tools): it
+    /// validates and remembers a hotkey but registers nothing with Windows and
+    /// never fires.
+    /// </summary>
+    private sealed class UnregisteredHotkeyService : IGlobalHotkeyService
+    {
+        private volatile DetectionHotkeyConfig? _registered;
+
+        public bool IsRegistered => _registered is not null;
+
+        public DetectionHotkeyConfig? RegisteredHotkey => _registered;
+
+        public string? LastError => null;
+
+        public event EventHandler? HotkeyPressed
+        {
+            add { }
+            remove { }
+        }
+
+        public string? Start(DetectionHotkeyConfig hotkey)
+        {
+            ArgumentNullException.ThrowIfNull(hotkey);
+            if (!HotkeyParser.TryParse(hotkey, out _, out _, out string? error))
+            {
+                return error ?? $"Unsupported hotkey '{hotkey}'.";
+            }
+
+            _registered = CopyHotkey(hotkey);
+            return null;
+        }
+
+        public void Stop() => _registered = null;
+
+        public void Dispose() => _registered = null;
     }
 }
 
 /// <summary>One recorded preset-switch attempt (shown on the Status tab).</summary>
 public sealed record ActivationAttempt(DateTime At, string What, string Key, bool Success, string Message);
+
+/// <summary>A Test switch waiting for DBD focus (<see cref="AppController.PendingTest"/>).</summary>
+/// <param name="Name">The realm tested, or <see cref="AppConfigKeys.GlobalShortcutKey"/> for the Global preset.</param>
+/// <param name="PresetName">The preset's file name.</param>
+/// <param name="Remaining">How long it still waits for focus before it gives up.</param>
+public sealed record PendingTest(string Name, string PresetName, TimeSpan Remaining, long Serial = 0);
+
+/// <summary>How a Test ended by itself (<see cref="AppController.LastTestOutcome"/>).</summary>
+/// <param name="Name">The Test's shortcut name (a realm, or the Global key), as in <see cref="PendingTest.Name"/>.</param>
+/// <param name="Serial">The Test's number (<see cref="PendingTest.Serial"/>).</param>
+/// <param name="Message">Its outcome, as the status line said it ("Test: switched to …", "Test failed: …", "Test of … cancelled — …").</param>
+public sealed record TestOutcome(string Name, long Serial, string Message);
+
+/// <summary>The assigned presets the running ReShade can't switch to yet (<see cref="AppController.BlockedPresetShortcuts"/>).</summary>
+/// <param name="NeedingDbdRestart">Display names a DBD restart fixes (<see cref="AppController.NamesNeedingDbdRestart"/>).</param>
+/// <param name="WaitingForReshadeIni">Display names that need the right ReShade.ini first (<see cref="AppController.NamesWaitingForReshadeIni"/>).</param>
+/// <param name="Notice">The banner text (<see cref="AppController.BlockedShortcutsNotice"/>); null when none is blocked.</param>
+public sealed record BlockedPresetShortcuts(IReadOnlyList<string> NeedingDbdRestart, IReadOnlyList<string> WaitingForReshadeIni, string? Notice);
+
+/// <summary>A confident detection (<see cref="AppController.MapDetected"/>).</summary>
+public sealed class MapDetectedEventArgs(string realm, string? map, double confidence) : EventArgs
+{
+    /// <summary>The detected realm (as in the map database).</summary>
+    public string Realm { get; } = realm;
+
+    /// <summary>The detected map; null when only the realm was read.</summary>
+    public string? Map { get; } = map;
+
+    /// <summary>The read's confidence, 0..1.</summary>
+    public double Confidence { get; } = confidence;
+}

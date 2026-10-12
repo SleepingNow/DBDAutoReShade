@@ -1,0 +1,374 @@
+<UserControl x:Class="DBDAutoReShade.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:cf="clr-namespace:DBDAutoReShade.App.Controls"
+             xmlns:infra="clr-namespace:DBDAutoReShade.App.Infrastructure"
+             xmlns:vm="clr-namespace:DBDAutoReShade.App.ViewModels"
+             x:Name="Root"
+             AutomationProperties.Name="Settings">
+    <!--
+        Settings (the prototype's .settings): groups in two columns, a 200 px heading with its description and the
+        controls (at most 560 px), 800 px wide in all when the window has room; under 1180 px the heading column is
+        170 px. Groups: Detection hotkey, Global preset hotkey (new), Paths, Behaviour (auto-restore, animations, the
+        Great sound and its volume, debug mode), Map database, ReShade check, Danger zone (reset). Each group tells
+        the outcome of its own actions (a note, and a problem in Entity red), since the status line lives on Status.
+    -->
+    <UserControl.Resources>
+        <infra:BoolVisibilityConverter x:Key="Visible"/>
+        <infra:BoolVisibilityConverter x:Key="Hidden" Invert="True"/>
+        <infra:HasValueConverter x:Key="HasValue"/>
+        <infra:HasValueConverter x:Key="NoValue" Invert="True"/>
+        <infra:EnumMatchConverter x:Key="Is"/>
+        <infra:EnumMatchConverter x:Key="IsNot" Invert="True"/>
+
+        <GridLength x:Key="LabelColumnWidth">200</GridLength>
+        <GridLength x:Key="GapColumnWidth">40</GridLength>
+
+        <Style x:Key="Group" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{StaticResource CfLineBrush}"/>
+            <Setter Property="BorderThickness" Value="0,1,0,0"/>
+            <Setter Property="Padding" Value="0,24,0,24"/>
+        </Style>
+        <Style x:Key="GroupTitle" TargetType="TextBlock" BasedOn="{StaticResource CfSectionTitle}">
+            <Setter Property="LineHeight" Value="25.2"/>
+            <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+            <Setter Property="AutomationProperties.HeadingLevel" Value="Level2"/>
+        </Style>
+        <Style x:Key="GroupDesc" TargetType="TextBlock" BasedOn="{StaticResource CfDescription}">
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+        <Style x:Key="Note" TargetType="TextBlock" BasedOn="{StaticResource CfDescription}">
+            <Setter Property="Foreground" Value="{StaticResource CfBoneBrush}"/>
+        </Style>
+        <Style x:Key="BigKey" TargetType="cf:Keycap">
+            <Setter Property="Size" Value="Large"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,16,0"/>
+        </Style>
+
+        <!-- a ReShade check line: a 46 px tag and the text; a result line spans both under a rule -->
+        <DataTemplate x:Key="ReportLineTemplate" DataType="{x:Type vm:ReportLine}">
+            <Grid x:Name="Line" Margin="0,5,0,5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="46"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <ContentControl x:Name="Tag" Content="{Binding Tag}" Style="{StaticResource CfReportTagOk}" VerticalAlignment="Top" Margin="0,1,0,0"/>
+                <TextBlock x:Name="Text" Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" FontFamily="{StaticResource CfBodyFont}" FontSize="14" LineHeight="20.3"
+                           Foreground="{StaticResource CfBoneBrush}"/>
+            </Grid>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Kind}" Value="Info">
+                    <Setter TargetName="Tag" Property="Style" Value="{StaticResource CfReportTagInfo}"/>
+                    <Setter TargetName="Text" Property="Foreground" Value="{StaticResource CfAshBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Issue">
+                    <Setter TargetName="Tag" Property="Style" Value="{StaticResource CfReportTagIssue}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Kind}" Value="Result">
+                    <Setter TargetName="Tag" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="Text" Property="Grid.Column" Value="0"/>
+                    <Setter TargetName="Text" Property="Grid.ColumnSpan" Value="3"/>
+                    <Setter TargetName="Text" Property="FontWeight" Value="SemiBold"/>
+                    <Setter TargetName="Line" Property="Margin" Value="0,6,0,5"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+        <StackPanel x:Name="Groups" Margin="44,14,48,48" MaxWidth="800" HorizontalAlignment="Left">
+
+            <!-- Detection hotkey -->
+            <Border Style="{StaticResource Group}" BorderThickness="0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Detection hotkey" Style="{StaticResource GroupTitle}"/>
+                        <TextBlock Text="Press it on the loading screen to read the map." Style="{StaticResource GroupDesc}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <WrapPanel>
+                            <cf:Keycap x:Name="HotkeyCap" IsCapturing="{Binding HotkeyCaptureMode}">
+                                <cf:Keycap.Style>
+                                    <Style TargetType="cf:Keycap" BasedOn="{StaticResource BigKey}">
+                                        <Setter Property="Text" Value="{Binding HotkeyText}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HotkeyCaptureMode}" Value="True">
+                                                <Setter Property="Text" Value="…"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </cf:Keycap.Style>
+                            </cf:Keycap>
+                            <Button x:Name="HotkeyButton" Content="{Binding HotkeyButtonText}" Command="{Binding BeginHotkeyCaptureCommand}" VerticalAlignment="Center"
+                                    AutomationProperties.Name="{Binding HotkeyButtonName}"/>
+                        </WrapPanel>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource Note}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Text="{x:Static vm:MainViewModel.CaptureHelpText}"
+                                   Visibility="{Binding HotkeyCaptureMode, Converter={StaticResource Visible}}"/>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource CfDescription}" Text="{Binding HotkeyNote}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding HotkeyNote, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource CfError}" Text="{Binding HotkeyNoteProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding HotkeyNoteProblem, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,8,0,0" Style="{StaticResource CfError}" Text="{Binding DetectionHotkeyProblem}"
+                                   Visibility="{Binding DetectionHotkeyProblem, Converter={StaticResource HasValue}}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Global preset hotkey -->
+            <Border Style="{StaticResource Group}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Global preset hotkey" Style="{StaticResource GroupTitle}"/>
+                        <TextBlock Text="Press it anywhere, in game too, to switch to the Global / Menu preset." Style="{StaticResource GroupDesc}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <WrapPanel>
+                            <cf:Keycap x:Name="GlobalHotkeyCap" IsCapturing="{Binding GlobalHotkeyCaptureMode}">
+                                <cf:Keycap.Style>
+                                    <Style TargetType="cf:Keycap" BasedOn="{StaticResource BigKey}">
+                                        <Setter Property="Text" Value="{Binding GlobalHotkeyText}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GlobalHotkeyCaptureMode}" Value="True">
+                                                <Setter Property="Text" Value="…"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </cf:Keycap.Style>
+                            </cf:Keycap>
+                            <Button x:Name="GlobalHotkeyButton" Content="{Binding GlobalHotkeyButtonText}" Command="{Binding BeginGlobalHotkeyCaptureCommand}"
+                                    VerticalAlignment="Center" AutomationProperties.Name="{Binding GlobalHotkeyButtonName}"/>
+                            <Button x:Name="ClearGlobalHotkeyButton" Content="Clear" Style="{StaticResource CfButtonGhost}" Command="{Binding ClearGlobalHotkeyCommand}" Margin="8,0,0,0"
+                                    VerticalAlignment="Center" AutomationProperties.Name="Clear the Global preset hotkey"
+                                    cf:CampfireAssist.FocusOnLeave="{Binding ElementName=GlobalHotkeyButton}"/>
+                        </WrapPanel>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource Note}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Text="{x:Static vm:MainViewModel.CaptureHelpText}"
+                                   Visibility="{Binding GlobalHotkeyCaptureMode, Converter={StaticResource Visible}}"/>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource CfDescription}" Text="{Binding GlobalHotkeyNote}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding GlobalHotkeyNote, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource CfError}" Text="{Binding GlobalHotkeyNoteProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding GlobalHotkeyNoteProblem, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,8,0,0" Style="{StaticResource CfError}" Text="{Binding GlobalHotkeyProblem}"
+                                   Visibility="{Binding GlobalHotkeyProblem, Converter={StaticResource HasValue}}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Paths -->
+            <Border Style="{StaticResource Group}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Paths" Style="{StaticResource GroupTitle}"/>
+                        <TextBlock Text="Where the game and ReShade live." Style="{StaticResource GroupDesc}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock x:Name="DbdLabel" Text="Dead by Daylight" Style="{StaticResource CfLabel}" Margin="0,0,0,6"/>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Browse" Margin="10,0,0,0" VerticalAlignment="Top" Command="{Binding BrowseDbdCommand}"
+                                    AutomationProperties.Name="Browse for Dead by Daylight"/>
+                            <Border Style="{StaticResource CfPathBox}">
+                                <!-- selectable: the path can be copied -->
+                                <TextBox x:Name="DbdPathText" Text="{Binding DbdPath, Mode=OneWay}" Style="{StaticResource CfSelectableText}" TextBlock.LineHeight="18.9"
+                                         VerticalAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=DbdLabel}"/>
+                            </Border>
+                        </DockPanel>
+                        <TextBlock x:Name="IniLabel" Text="ReShade.ini" Style="{StaticResource CfLabel}" Margin="0,12,0,6"/>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Browse" Margin="10,0,0,0" VerticalAlignment="Top" Command="{Binding BrowseReshadeCommand}"
+                                    AutomationProperties.Name="Browse for ReShade.ini"/>
+                            <Border Style="{StaticResource CfPathBox}">
+                                <TextBox x:Name="IniPathText" Text="{Binding ReshadePath, Mode=OneWay}" Style="{StaticResource CfSelectableText}" TextBlock.LineHeight="18.9"
+                                         VerticalAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=IniLabel}"/>
+                            </Border>
+                        </DockPanel>
+                        <TextBlock Margin="0,12,0,0" Style="{StaticResource CfDescription}" Text="{Binding PathsNote}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding PathsNote, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource CfError}" Text="{Binding PathsProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding PathsProblem, Converter={StaticResource HasValue}}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Behaviour -->
+            <Border Style="{StaticResource Group}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Behaviour" Style="{StaticResource GroupTitle}"/>
+                    <StackPanel Grid.Column="2">
+                        <CheckBox Content="{x:Static vm:MainViewModel.AutoRestoreLabel}" IsChecked="{Binding AutoRestore, Mode=TwoWay}"/>
+
+                        <CheckBox Content="Play animations" IsChecked="{Binding AnimationsEnabled, Mode=TwoWay}" Margin="0,12,0,0"
+                                  AutomationProperties.HelpText="{x:Static vm:MainViewModel.AnimationsHint}"/>
+                        <TextBlock Text="{x:Static vm:MainViewModel.AnimationsHint}" Style="{StaticResource CfHint}" Margin="34,4,0,0"/>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Content="Play the Great skill-check sound when a map is found" IsChecked="{Binding SoundEnabled, Mode=TwoWay}"/>
+                            <Button Grid.Column="1" Content="Play sound" Style="{StaticResource CfButtonSecondarySmall}" Margin="16,-5,0,0" VerticalAlignment="Top"
+                                    Command="{Binding PlaySoundCommand}" AutomationProperties.Name="Play the Great skill-check sound"/>
+                        </Grid>
+                        <Grid x:Name="VolumeRow" Margin="34,10,0,0" IsEnabled="{Binding SoundEnabled}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Opacity" Value="0.42"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                            <TextBlock x:Name="VolumeLabel" Text="Skill-check sound volume" Style="{StaticResource CfLabel}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                            <Slider x:Name="VolumeSlider" Grid.Column="1" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10" VerticalAlignment="Center"
+                                    Value="{Binding SoundVolumePercent, Mode=TwoWay}" AutomationProperties.Name="Skill-check sound volume"
+                                    AutomationProperties.HelpText="{Binding SoundVolumeText}"/>
+                            <TextBlock Grid.Column="2" Text="{Binding SoundVolumeText}" MinWidth="44" TextAlignment="Right" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       FontFamily="{StaticResource CfBodyFont}" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource CfBoneBrush}"/>
+                        </Grid>
+                        <TextBlock Margin="34,8,0,0" Style="{StaticResource CfError}" Text="{Binding SoundProblem}"
+                                   Visibility="{Binding SoundProblem, Converter={StaticResource HasValue}}"/>
+
+                        <CheckBox IsChecked="{Binding DebugMode, Mode=TwoWay}" Margin="0,12,0,0"
+                                  Content="Debug mode: save the last scan's crops when a scan ends without a confident read (newest 20 kept)"
+                                  ToolTip="The crops are saved under %AppData%\DBDAutoReShade\debug-crops."/>
+                        <TextBlock Margin="0,10,0,0" Style="{StaticResource CfError}" Text="{Binding BehaviourProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding BehaviourProblem, Converter={StaticResource HasValue}}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Map database -->
+            <Border Style="{StaticResource Group}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Map database" Style="{StaticResource GroupTitle}"/>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock FontFamily="{StaticResource CfBodyFont}" FontSize="15" Foreground="{StaticResource CfBoneBrush}">
+                            <Run Text="Version"/> <Run Text="{Binding DatabaseVersionText, Mode=OneWay}" FontWeight="SemiBold"/><Run Text=","/> <Run Text="{Binding DatabaseSummary, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock x:Name="ManifestLabel" Text="Update manifest URL" Style="{StaticResource CfLabel}" Margin="0,12,0,6"/>
+                        <!-- the hint, or why the URL was refused, is the box's help text (the prototype's aria-describedby) -->
+                        <TextBox x:Name="ManifestBox" Text="{Binding ManifestUrl, Mode=TwoWay}" cf:CampfireAssist.Placeholder="https://"
+                                 cf:CampfireAssist.IsInvalid="{Binding ManifestUrlError, Converter={StaticResource HasValue}}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ManifestLabel}" AutomationProperties.HelpText="{Binding ManifestUrlHelp}"/>
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource CfHint}" Text="{x:Static vm:MainViewModel.ManifestUrlHint}"
+                                   Visibility="{Binding ManifestUrlError, Converter={StaticResource NoValue}}"/>
+                        <TextBlock x:Name="ManifestError" Margin="0,6,0,0" Style="{StaticResource CfError}" Text="{Binding ManifestUrlError}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding ManifestUrlError, Converter={StaticResource HasValue}}"/>
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource CfError}" Text="{Binding DatabaseProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding DatabaseProblem, Converter={StaticResource HasValue}}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ReShade check -->
+            <Border Style="{StaticResource Group}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="ReShade check" Style="{StaticResource GroupTitle}"/>
+                        <TextBlock Text="Verifies ReShade.ini, the hook DLL, stored shortcuts and preset files." Style="{StaticResource GroupDesc}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <WrapPanel>
+                            <Button Content="Run checks" Style="{StaticResource CfButtonPrimary}" Command="{Binding RunDiagnosticsCommand}" Margin="0,0,10,0"/>
+                            <Button Content="Copy report" Command="{Binding CopyDiagnosticsCommand}" Margin="0,0,10,0"/>
+                            <TextBlock Text="{Binding CopyNote}" Style="{StaticResource CfHint}" VerticalAlignment="Center" cf:CampfireAssist.LiveRegion="Polite"/>
+                        </WrapPanel>
+                        <Border Style="{StaticResource CfReportBox}" Margin="0,12,0,0">
+                            <Grid>
+                                <TextBlock Text="{Binding DiagnosticsReport}" Style="{StaticResource CfDescription}" Margin="0,4"
+                                           Visibility="{Binding DiagnosticsLines.Count, Converter={StaticResource Is}, ConverterParameter=0}"/>
+                                <ItemsControl ItemsSource="{Binding DiagnosticsLines}" ItemTemplate="{StaticResource ReportLineTemplate}" Focusable="False"
+                                              AutomationProperties.Name="ReShade check report"/>
+                            </Grid>
+                        </Border>
+                        <!-- the clipboard was busy: the report as plain text to select and copy by hand -->
+                        <StackPanel Margin="0,12,0,0" Visibility="{Binding ShowReportText, Converter={StaticResource Visible}}">
+                            <TextBlock x:Name="ReportTextLabel" Text="Report text" Style="{StaticResource CfLabel}" Margin="0,0,0,6"/>
+                            <Border Style="{StaticResource CfPathBox}">
+                                <TextBox x:Name="ReportText" Text="{Binding DiagnosticsReport, Mode=OneWay}" Style="{StaticResource CfSelectableText}" FontSize="13"
+                                         MaxHeight="220" VerticalScrollBarVisibility="Auto" AutomationProperties.LabeledBy="{Binding ElementName=ReportTextLabel}"/>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Danger zone -->
+            <Border Style="{StaticResource Group}" BorderBrush="#80B0182D">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{DynamicResource LabelColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource GapColumnWidth}"/>
+                        <ColumnDefinition Width="*" MaxWidth="560"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
+                        <Viewbox Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="{StaticResource CfIconHook}" Stroke="{StaticResource CfEntityInkBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                            </Canvas>
+                        </Viewbox>
+                        <TextBlock Text="Danger zone" Style="{StaticResource GroupTitle}" Foreground="{StaticResource CfEntityInkBrush}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Style="{StaticResource Note}"
+                                   Text="Resets this app's settings and removes its own preset shortcuts from ReShade.ini. Your own ReShade shortcuts, your preset files, Dead by Daylight and ReShade are not touched."/>
+                        <WrapPanel Margin="0,12,0,0" Visibility="{Binding IsResetConfirming, Converter={StaticResource Hidden}}">
+                            <Button x:Name="ResetButton" Content="Reset settings" Style="{StaticResource CfButtonDanger}" Command="{Binding ResetSettingsCommand}" Margin="0,0,10,0"/>
+                            <TextBlock Text="{Binding ResetNote}" Style="{StaticResource CfHint}" VerticalAlignment="Center" cf:CampfireAssist.LiveRegion="Polite"/>
+                        </WrapPanel>
+                        <TextBlock Margin="0,8,0,0" Style="{StaticResource CfError}" Text="{Binding ResetProblem}" cf:CampfireAssist.LiveRegion="Polite"
+                                   Visibility="{Binding ResetProblem, Converter={StaticResource HasValue}}"/>
+                        <Border x:Name="ResetConfirmBox" Style="{StaticResource CfConfirmBox}" Margin="0,12,0,0" Visibility="{Binding IsResetConfirming, Converter={StaticResource Visible}}">
+                            <StackPanel>
+                                <TextBlock Text="Reset settings now? This can't be undone." Style="{StaticResource Note}"/>
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="ConfirmResetButton" Content="Reset settings" Style="{StaticResource CfButtonDanger}" Command="{Binding ConfirmResetCommand}" Margin="0,0,10,0"/>
+                                    <Button Content="Cancel" Command="{Binding CancelResetCommand}"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

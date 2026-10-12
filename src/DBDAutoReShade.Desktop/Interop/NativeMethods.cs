@@ -122,6 +122,17 @@ public static class NativeMethods
         public INPUTUNION u;
     }
 
+    // --- Sound ---
+
+    /// <summary>
+    /// winmm PlaySound. With SND_MEMORY <paramref name="pszSound"/> points to a
+    /// WAV image in memory, which must stay valid while an SND_ASYNC sound
+    /// plays; IntPtr.Zero stops the sound this process is playing.
+    /// </summary>
+    [DllImport("winmm.dll", EntryPoint = "PlaySoundW", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PlaySound(IntPtr pszSound, IntPtr hmod, uint fdwSound);
+
     // --- Window geometry ---
 
     [DllImport("user32.dll", SetLastError = true)]

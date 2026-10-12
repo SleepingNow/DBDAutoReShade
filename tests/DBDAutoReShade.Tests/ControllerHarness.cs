@@ -66,7 +66,7 @@ internal sealed record ControllerHarnessOptions
     /// <summary>With <see cref="RestartOf"/>: what happened to DBD while the app was closed (e.g. a new PID, or not running).</summary>
     public Action<ControllerHarness.FakeDbdMonitor>? DbdMeanwhile { get; init; }
 
-    /// <summary>Hotkeys another program already holds when the app starts (registering one fails).</summary>
+    /// <summary>Hotkeys another program already holds when the app starts (registering one fails, for either hotkey).</summary>
     public IReadOnlyList<DetectionHotkeyConfig> HotkeysHeldElsewhere { get; init; } = Array.Empty<DetectionHotkeyConfig>();
 
     /// <summary>Manually driven by default (huge poll interval): tests call PollOnce.</summary>
@@ -80,8 +80,8 @@ internal sealed record ControllerHarnessOptions
 }
 
 /// <summary>
-/// The real <see cref="AppController"/> wired to fakes: DBD monitor, global
-/// hotkey (nothing is registered with Windows), key simulator, focus, OCR,
+/// The real <see cref="AppController"/> wired to fakes: DBD monitor, both global
+/// hotkeys (nothing is registered with Windows), sound, key simulator, focus, OCR,
 /// capture (lifecycle frames by grey level), a manual monotonic clock and a
 /// manually polled lifecycle.
 /// </summary>
@@ -127,27 +127,44 @@ internal sealed class ControllerHarness : IDisposable
     }
 
     /// <summary>
-    /// The detection hotkey without Windows, so controller tests never take a
-    /// system-wide hotkey (the user's F8, or a Ctrl+Alt+Shift combo the app
+    /// What Windows knows about hotkeys, for the fakes of one harness: combos
+    /// other programs hold, and which fake holds which combo. Like
+    /// RegisterHotKey, a combo one service holds can't be registered by
+    /// another (the detection and Global preset hotkeys share it).
+    /// </summary>
+    internal sealed class FakeHotkeyWorld
+    {
+        public object Lock { get; } = new();
+
+        public HashSet<(int Key, int Modifiers)> HeldElsewhere { get; } = new();
+
+        public Dictionary<FakeHotkeyService, (int Key, int Modifiers)> Held { get; } = new();
+    }
+
+    /// <summary>
+    /// A global hotkey without Windows, so controller tests never take a
+    /// system-wide hotkey (the user's F8/F9, or a Ctrl+Alt+Shift combo the app
     /// sends to ReShade) and never fail because another program holds one.
     /// Same contract as <see cref="GlobalHotkeyService"/>: a hotkey that fails
     /// to parse keeps the current one; one that fails to register (held
-    /// elsewhere) leaves none.
+    /// elsewhere, or by the other fake of the same world) leaves none.
     /// </summary>
     internal sealed class FakeHotkeyService : IGlobalHotkeyService
     {
-        private readonly object _lock = new();
-        private readonly HashSet<(int Key, int Modifiers)> _heldElsewhere = new();
-        private (int Key, int Modifiers)? _held;
+        private readonly FakeHotkeyWorld _world;
         private DetectionHotkeyConfig? _registered;
         private string? _lastError;
         private bool _disposed;
+        private int _starts;
+        private int _stops;
+
+        public FakeHotkeyService(FakeHotkeyWorld? world = null) => _world = world ?? new FakeHotkeyWorld();
 
         public bool IsRegistered
         {
             get
             {
-                lock (_lock)
+                lock (_world.Lock)
                 {
                     return _registered is not null;
                 }
@@ -158,7 +175,7 @@ internal sealed class ControllerHarness : IDisposable
         {
             get
             {
-                lock (_lock)
+                lock (_world.Lock)
                 {
                     return _registered;
                 }
@@ -169,35 +186,66 @@ internal sealed class ControllerHarness : IDisposable
         {
             get
             {
-                lock (_lock)
+                lock (_world.Lock)
                 {
                     return _lastError;
                 }
             }
         }
 
+        /// <summary>Calls of <see cref="Start"/> so far.</summary>
+        public int StartCount => Volatile.Read(ref _starts);
+
+        /// <summary>Calls of <see cref="Stop"/> so far.</summary>
+        public int StopCount => Volatile.Read(ref _stops);
+
         public event EventHandler? HotkeyPressed;
 
-        /// <summary>Another program takes <paramref name="hotkey"/>: registering it fails from now on.</summary>
+        /// <summary>Another program takes <paramref name="hotkey"/>: registering it fails from now on (for every fake of this world).</summary>
         public void HoldElsewhere(DetectionHotkeyConfig hotkey)
         {
-            lock (_lock)
+            lock (_world.Lock)
             {
-                _heldElsewhere.Add(Parse(hotkey));
+                _world.HeldElsewhere.Add(Parse(hotkey));
+            }
+        }
+
+        /// <summary>The other program lets <paramref name="hotkey"/> go again.</summary>
+        public void ReleaseElsewhere(DetectionHotkeyConfig hotkey)
+        {
+            lock (_world.Lock)
+            {
+                _world.HeldElsewhere.Remove(Parse(hotkey));
             }
         }
 
         /// <summary>Whether this service currently holds <paramref name="hotkey"/>.</summary>
         public bool Holds(DetectionHotkeyConfig hotkey)
         {
-            lock (_lock)
+            lock (_world.Lock)
             {
-                return _held == Parse(hotkey);
+                return _world.Held.TryGetValue(this, out var held) && held == Parse(hotkey);
             }
         }
 
-        /// <summary>The user presses the registered hotkey.</summary>
+        /// <summary>
+        /// Runs after every <see cref="Press"/>: e.g. waits until the controller has
+        /// handled the press (the Global preset hotkey's presses run off the pump thread).
+        /// </summary>
+        public Action? AfterPress { get; set; }
+
+        /// <summary>The user presses the registered hotkey; returns once the press was handled (<see cref="AfterPress"/>).</summary>
         public void Press()
+        {
+            PressWithoutWaiting();
+            AfterPress?.Invoke();
+        }
+
+        /// <summary>
+        /// The user presses the registered hotkey; returns as soon as the handler
+        /// does, like the pump thread of <see cref="GlobalHotkeyService"/>.
+        /// </summary>
+        public void PressWithoutWaiting()
         {
             Assert.True(IsRegistered, "No hotkey is registered.");
             HotkeyPressed?.Invoke(this, EventArgs.Empty);
@@ -206,7 +254,8 @@ internal sealed class ControllerHarness : IDisposable
         public string? Start(DetectionHotkeyConfig hotkey)
         {
             ArgumentNullException.ThrowIfNull(hotkey);
-            lock (_lock)
+            Interlocked.Increment(ref _starts);
+            lock (_world.Lock)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 if (!HotkeyParser.TryParse(hotkey, out int vk, out int mods, out string? parseError))
@@ -214,15 +263,15 @@ internal sealed class ControllerHarness : IDisposable
                     return parseError ?? $"Unsupported hotkey '{hotkey}'.";
                 }
 
-                _held = null;
+                _world.Held.Remove(this);
                 _registered = null;
-                if (_heldElsewhere.Contains((vk, mods)))
+                if (_world.HeldElsewhere.Contains((vk, mods)) || _world.Held.ContainsValue((vk, mods)))
                 {
                     _lastError = GlobalHotkeyService.AlreadyInUseError;
                     return _lastError;
                 }
 
-                _held = (vk, mods);
+                _world.Held[this] = (vk, mods);
                 _registered = new DetectionHotkeyConfig { Key = hotkey.Key, Ctrl = hotkey.Ctrl, Shift = hotkey.Shift, Alt = hotkey.Alt };
                 _lastError = null;
                 return null;
@@ -231,9 +280,10 @@ internal sealed class ControllerHarness : IDisposable
 
         public void Stop()
         {
-            lock (_lock)
+            Interlocked.Increment(ref _stops);
+            lock (_world.Lock)
             {
-                _held = null;
+                _world.Held.Remove(this);
                 _registered = null;
                 _lastError = null;
             }
@@ -241,10 +291,10 @@ internal sealed class ControllerHarness : IDisposable
 
         public void Dispose()
         {
-            lock (_lock)
+            lock (_world.Lock)
             {
                 _disposed = true;
-                _held = null;
+                _world.Held.Remove(this);
                 _registered = null;
             }
         }
@@ -253,6 +303,34 @@ internal sealed class ControllerHarness : IDisposable
         {
             Assert.True(HotkeyParser.TryParse(hotkey, out int vk, out int mods), $"Unsupported test hotkey '{hotkey}'.");
             return (vk, mods);
+        }
+    }
+
+    /// <summary>Records every Great sound the controller (or a test) plays; plays nothing.</summary>
+    internal sealed class FakeSounds : ISoundEffects
+    {
+        public ConcurrentQueue<double> Played { get; } = new();
+
+        /// <summary>What <see cref="PlayGreat"/> returns (true: "playback started").</summary>
+        public bool Result { get; set; } = true;
+
+        /// <summary>Thrown by <see cref="PlayGreat"/> when set (a broken audio stack).</summary>
+        public Exception? Throw { get; set; }
+
+        /// <summary>What <see cref="GreatSoundProblem"/> reports (null: the sound can play).</summary>
+        public string? Problem { get; set; }
+
+        public string? GreatSoundProblem() => Problem;
+
+        public bool PlayGreat(double volume)
+        {
+            Played.Enqueue(volume);
+            if (Throw is not null)
+            {
+                throw Throw;
+            }
+
+            return Result;
         }
     }
 
@@ -401,7 +479,12 @@ internal sealed class ControllerHarness : IDisposable
     private volatile bool _uncovered;
     private int _disposed;
 
-    private ControllerHarness(string dir) => Dir = dir;
+    private ControllerHarness(string dir)
+    {
+        Dir = dir;
+        Hotkey = new FakeHotkeyService(HotkeyWorld);
+        GlobalPresetHotkey = new FakeHotkeyService(HotkeyWorld);
+    }
 
     public string Dir { get; }
 
@@ -429,8 +512,17 @@ internal sealed class ControllerHarness : IDisposable
 
     public string ConfigPath { get; private set; } = null!;
 
-    /// <summary>The (fake) global hotkey service the controller registers with.</summary>
-    public FakeHotkeyService Hotkey { get; } = new();
+    /// <summary>The (fake) Windows both hotkey fakes register with.</summary>
+    public FakeHotkeyWorld HotkeyWorld { get; } = new();
+
+    /// <summary>The (fake) detection hotkey service the controller registers with.</summary>
+    public FakeHotkeyService Hotkey { get; }
+
+    /// <summary>The (fake) Global preset hotkey service (F9 by default), next to <see cref="Hotkey"/>.</summary>
+    public FakeHotkeyService GlobalPresetHotkey { get; }
+
+    /// <summary>The (fake) sound effects the controller plays through.</summary>
+    public FakeSounds Sounds { get; } = new();
 
     /// <summary>Whether DBD's window counts as the foreground window.</summary>
     public bool Focused
@@ -541,7 +633,14 @@ internal sealed class ControllerHarness : IDisposable
             {
                 h.UncoveredAsked.Enqueue(hwnd);
                 return h.UncoveredCheck?.Invoke(hwnd) ?? h.Uncovered;
-            });
+            },
+            globalPresetHotkey: h.GlobalPresetHotkey,
+            soundEffects: h.Sounds);
+
+        // A Global preset hotkey press is queued off the pump thread: Press() returns once it was handled.
+        AppController controller = h.Controller;
+        h.GlobalPresetHotkey.AfterPress = () =>
+            Assert.True(controller.GlobalHotkeyPressesHandled.Wait(TimeSpan.FromSeconds(10)), "The Global preset hotkey press was not handled.");
         h.Controller.Initialize();
         return h;
     }
@@ -657,6 +756,7 @@ internal sealed class ControllerHarness : IDisposable
             Lifecycle.Dispose();
             Detector.Dispose();
             Hotkey.Dispose();
+            GlobalPresetHotkey.Dispose();
         }
         catch
         {

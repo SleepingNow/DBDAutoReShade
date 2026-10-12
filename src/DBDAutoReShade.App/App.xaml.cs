@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Windows;
 using System.Windows.Threading;
 using DBDAutoReShade.App.Infrastructure;
+using DBDAutoReShade.App.Media;
 using DBDAutoReShade.App.Services;
 using DBDAutoReShade.App.ViewModels;
 using DBDAutoReShade.Core.Services;
@@ -27,6 +28,8 @@ public partial class App : Application
     private MainViewModel? _viewModel;
     private DbdProcessService? _dbd;
     private IGlobalHotkeyService? _hotkey;
+    private IGlobalHotkeyService? _globalPresetHotkey;
+    private SoundEffectsService? _sounds;
     private DetectionOrchestrator? _detector;
     private MatchLifecycleService? _lifecycle;
     private AppConfigService? _configService;
@@ -36,10 +39,12 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // Before anything touches the config, ReShade.ini or the global hotkey.
+        // Before anything touches the config, ReShade.ini or the global hotkeys.
+        // The development data-folder override (DBDAUTORESHADE_DATA_DIR) gets
+        // its own mutex; without it (the default) nothing changes.
         try
         {
-            _instance = SingleInstanceGuard.TryAcquire();
+            _instance = SingleInstanceGuard.TryAcquire(SingleInstanceGuard.NameFor(AppConfigService.DataDirOverride()));
         }
         catch (Exception ex)
         {
@@ -95,6 +100,9 @@ public partial class App : Application
         var states = new RuntimeStateService();
         _dbd = new DbdProcessService();
         _hotkey = new GlobalHotkeyService();
+        _globalPresetHotkey = new GlobalHotkeyService(); // the second registration: "Switch to Global preset"
+        _sounds = new SoundEffectsService(OpenGreatSound);
+        _sounds.Preload(); // parse the sound now, not when the first map is found
         var capture = new GdiWindowCaptureService();
         var ocr = new WindowsOcrEngine();
         var matcher = new MapMatchingService();
@@ -104,11 +112,20 @@ public partial class App : Application
         var decisions = new PresetDecisionService();
         var reshadeConfig = new ReshadeConfigurationService();
 
+        // With the development data-folder override, the installed DBD and its
+        // ReShade.ini are never adopted by discovery: a smoke test sets its own
+        // (temp) paths and must not touch the real ReShade.ini.
+        bool devDataDir = AppConfigService.DataDirOverride() is not null;
         _controller = new AppController(_configService, _database, states, _dbd, _hotkey,
-            _detector, _lifecycle, activator, decisions, reshadeConfig);
+            _detector, _lifecycle, activator, decisions, reshadeConfig,
+            discoverDbdExePath: devDataDir ? static () => null : null,
+            discoverReshadeIniPath: devDataDir ? static _ => null : null,
+            globalPresetHotkey: _globalPresetHotkey, soundEffects: _sounds);
         _viewModel = new MainViewModel(_controller);
         _controller.Initialize();
         _controller.ApplyDatabaseVersion(_database.Version);
+        MotionPolicy.Current.AnimationsEnabled = _controller.AnimationsEnabled; // the wizard too; the main window follows the setting
+        PopupMotion.Follow(MotionPolicy.Current, Resources); // tool tips and menus: no fade while animations are off
 
         if (!_controller.Config.SetupCompleted)
         {
@@ -123,6 +140,16 @@ public partial class App : Application
         var main = new MainWindow(_viewModel);
         MainWindow = main;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
+
+        // once the window is up, the map pictures are decoded in its idle moments (one at a time), so the first switch
+        // to Presets does not decode them all at once while its tab crossfades in
+        EventHandler? prewarm = null;
+        prewarm = (_, _) =>
+        {
+            main.ContentRendered -= prewarm;
+            _ = MapImageCatalog.Default.PrewarmOnIdle(main.Dispatcher);
+        };
+        main.ContentRendered += prewarm;
         main.Show();
         _viewModel.Refresh();
 
@@ -143,6 +170,8 @@ public partial class App : Application
             _lifecycle?.Dispose();
             _detector?.Dispose();
             _hotkey?.Dispose();
+            _globalPresetHotkey?.Dispose();
+            _sounds?.Dispose();
             _dbd?.Dispose();
             _controller?.Dispose();
         }
@@ -153,6 +182,37 @@ public partial class App : Application
 
         _instance?.Dispose();
         base.OnExit(e);
+    }
+
+    /// <summary>
+    /// The Great skill-check sound as a WPF Resource of this assembly. The
+    /// component form resolves whatever the entry assembly is (the app, or a test host).
+    /// </summary>
+    public const string GreatSoundPackUri = "pack://application:,,,/DBDAutoReShade;component/Assets/Sounds/great.wav";
+
+    /// <summary>
+    /// Opens the Great skill-check sound: the WPF Resource Assets/Sounds/great.wav
+    /// (<see cref="GreatSoundPackUri"/>, works in the single-file publish), or the
+    /// loose file next to the executable. Throws when neither exists (the sound
+    /// service then stays silent and says why: SoundEffectsService.LoadError, and
+    /// the "Great sound" line of the ReShade check).
+    /// </summary>
+    public static Stream? OpenGreatSound()
+    {
+        try
+        {
+            _ = System.IO.Packaging.PackUriHelper.UriSchemePack; // registers pack:// (also before an Application exists)
+            if (GetResourceStream(new Uri(GreatSoundPackUri, UriKind.Absolute)) is { } resource)
+            {
+                return resource.Stream;
+            }
+        }
+        catch (IOException)
+        {
+            // Not embedded as a Resource: try the file below.
+        }
+
+        return File.OpenRead(Path.Combine(AppContext.BaseDirectory, "Assets", "Sounds", "great.wav"));
     }
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs args)

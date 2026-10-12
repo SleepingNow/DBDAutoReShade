@@ -3,147 +3,19 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
     <!--
-        Theming notes:
-        - Implicit styles match the exact runtime type, so a TargetType="Window" style never
-          reaches MainWindow/SetupWizardWindow: both windows set Style="{StaticResource AppWindow}".
-        - Text colour is inherited from the window (no implicit TextBlock style): an
-          application-wide TextBlock style would also recolour the text inside other controls'
-          templates (ComboBox items, the selection box), making it unreadable on their light chrome.
-        - The default (Aero2) TabItem and Button templates paint fixed light brushes when
-          selected / hovered, which ignores Background; both get small dark templates here.
-          The ComboBox keeps its light system chrome, so its text is dark.
+        Theming: the Campfire theme (Themes/Campfire.xaml, the approved "a-campfire" prototype) is the only theme.
+        It holds the tokens, the type ramp and the control templates, applied implicitly to every Button, CheckBox,
+        Slider, TextBox, ComboBox (+ items), ScrollBar, ScrollViewer, ToolTip, ListBox (+ items), ContextMenu and
+        MenuItem, so nothing ever falls back to the light Windows templates. There is deliberately no implicit
+        TextBlock style (it would reach the text inside other controls' templates).
+        Windows and views built without this Application (tests, tools) merge the same dictionary themselves
+        (Media/CampfireTheme.EnsureFor).
     -->
     <Application.Resources>
-        <Color x:Key="BgColor">#14161A</Color>
-        <Color x:Key="PanelColor">#1D2026</Color>
-        <Color x:Key="BorderColor">#2C313A</Color>
-        <Color x:Key="TextColor">#E8EAEF</Color>
-        <Color x:Key="MutedColor">#9AA0AE</Color>
-        <Color x:Key="AccentColor">#C8322B</Color>
-        <Color x:Key="OkColor">#3FA34D</Color>
-        <Color x:Key="WarnColor">#D9A441</Color>
-
-        <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}" />
-        <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}" />
-        <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
-        <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
-        <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
-        <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
-        <SolidColorBrush x:Key="ButtonBrush" Color="#2A2F38" />
-        <SolidColorBrush x:Key="ButtonHoverBrush" Color="#353B46" />
-        <SolidColorBrush x:Key="ButtonPressedBrush" Color="#41495A" />
-        <SolidColorBrush x:Key="DarkTextBrush" Color="#14161A" />
-
-        <Style x:Key="AppWindow" TargetType="Window">
-            <Setter Property="Background" Value="{StaticResource BgBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="FontSize" Value="13" />
-        </Style>
-        <Style TargetType="TabControl">
-            <Setter Property="Background" Value="{StaticResource BgBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        </Style>
-        <Style TargetType="TabItem">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="Background" Value="{StaticResource PanelBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="Padding" Value="16,6" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1,1,1,0"
-                                CornerRadius="4,4,0,0" Margin="0,0,2,0" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource BgBrush}" />
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                                <Setter Property="Panel.ZIndex" Value="1" />
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style TargetType="GroupBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="Margin" Value="0,0,0,10" />
-            <Setter Property="Padding" Value="10" />
-        </Style>
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource ButtonBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="10,4" />
-            <Setter Property="Margin" Value="4,0,0,0" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="3" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-                            <ContentPresenter RecognizesAccessKey="True"
-                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource ButtonHoverBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource ButtonPressedBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource MutedBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.45" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style TargetType="TextBox">
-            <Setter Property="Background" Value="#101216" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="Padding" Value="6,3" />
-        </Style>
-        <Style TargetType="ComboBox">
-            <!-- The default ComboBox chrome (selection box and drop-down) stays light whatever
-                 Background says, so its text must be dark to be readable. -->
-            <Setter Property="Foreground" Value="{StaticResource DarkTextBrush}" />
-        </Style>
-        <Style TargetType="ComboBoxItem">
-            <Setter Property="Foreground" Value="{StaticResource DarkTextBrush}" />
-        </Style>
-        <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Margin" Value="0,4,0,4" />
-        </Style>
-        <Style x:Key="MutedText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-        </Style>
-        <Style x:Key="LabelText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="Width" Value="130" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="ErrorText" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#F0968F" />
-            <Setter Property="TextWrapping" Value="Wrap" />
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/DBDAutoReShade;component/Themes/Campfire.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

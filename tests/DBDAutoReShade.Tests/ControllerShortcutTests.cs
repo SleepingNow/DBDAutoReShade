@@ -1,4 +1,5 @@
 using DBDAutoReShade.App.Services;
+using DBDAutoReShade.App.ViewModels;
 using DBDAutoReShade.Core.Models;
 using DBDAutoReShade.Core.Services;
 using DBDAutoReShade.Desktop.Services;
@@ -21,7 +22,11 @@ public sealed partial class ControllerActivationTests
         return path;
     }
 
-    private static DetectionHotkeyConfig Combo(string key) => new() { Key = key, Ctrl = true, Alt = true, Shift = true };
+    /// <summary>
+    /// A test hotkey Ctrl+Alt+<paramref name="key"/>: never one of the app's ReShade shortcut combos
+    /// (Ctrl+Alt+Shift + F13–F24/0–9), which the controller refuses as a hotkey.
+    /// </summary>
+    private static DetectionHotkeyConfig Combo(string key) => new() { Key = key, Ctrl = true, Alt = true };
 
     private static ReshadeShortcutConfig PoolCombo(int virtualKey) =>
         new() { VirtualKey = virtualKey, Ctrl = true, Alt = true, Shift = true };
@@ -383,6 +388,7 @@ public sealed partial class ControllerActivationTests
         Assert.StartsWith($"ReShade.ini was not found at '{missing}'", vm.RestartNoticeText);
         Assert.Contains("Set the right ReShade.ini under Settings", vm.RestartNoticeText);
         Assert.DoesNotContain("Restart Dead by Daylight", vm.RestartNoticeText);
+        AssertPresetsAskForTheReshadeIni(vm, MainViewModel.ReshadeIniNotFoundFlag); // the Presets tab says the same
 
         string? error = h.Controller.TestGlobalPreset();
         Assert.StartsWith($"ReShade.ini was not found at '{missing}' — set the right ReShade.ini under Settings", error);
@@ -396,17 +402,32 @@ public sealed partial class ControllerActivationTests
         h.Dbd.RaiseStatusChanged(running: true);
         Assert.Equal(all, h.Controller.NamesWaitingForReshadeIni);
         Assert.StartsWith("ReShade.ini was not found", vm.RestartNoticeText);
+        AssertPresetsAskForTheReshadeIni(vm, MainViewModel.ReshadeIniNotFoundFlag);
 
         // Setting the right ReShade.ini writes the shortcuts: now a DBD restart is what's left…
         h.Controller.SetReshadeIni(h.ReshadeIni);
         Assert.Empty(h.Controller.NamesWaitingForReshadeIni);
         Assert.Equal(all, h.Controller.NamesNeedingDbdRestart);
         Assert.StartsWith("Restart Dead by Daylight so ReShade loads the new preset shortcuts", vm.RestartNoticeText);
+        Assert.Equal("Restart needed", vm.PresetsTabStatus); // …and the Presets tab says so
+        foreach (PresetRowBase row in BlockedRows(vm))
+        {
+            Assert.True(row.NeedsRestart, row.DisplayName);
+            Assert.False(row.NeedsReshadeIni, row.DisplayName);
+            Assert.Contains("restart needed", row.AccessibleName);
+            vm.SelectRow(row);
+            Assert.True(vm.DetailNeedsRestart);
+            Assert.Equal(MainViewModel.RestartFlag, vm.DetailFlagText);
+            Assert.Equal("assigned, not loaded yet", vm.DetailShortcutValue);
+        }
 
         // …and it works.
         h.Dbd.ProcessId = 9002;
         h.Dbd.RaiseStatusChanged(running: true);
         Assert.False(vm.ShowRestartNotice);
+        Assert.Equal(string.Empty, vm.PresetsTabStatus);
+        Assert.Equal(string.Empty, vm.DetailFlagText);
+        Assert.All(BlockedRows(vm), row => Assert.False(row.IsBlocked, row.DisplayName));
         Assert.Null(h.Controller.TestGlobalPreset());
         Assert.Equal(1, h.Keys.CallCount);
     }
@@ -420,6 +441,67 @@ public sealed partial class ControllerActivationTests
         Assert.StartsWith("ReShade.ini is not set, so ReShade can't load the preset shortcuts", h.Controller.BlockedShortcutsNotice);
         Assert.StartsWith("ReShade.ini is not set — set the right ReShade.ini under Settings", h.Controller.TestRealmPreset("Coldwind Farm"));
         Assert.Equal(0, h.Keys.CallCount);
+    }
+
+    [Fact]
+    public void UnsetReshadeIni_WhileDbdRuns_ThePresetsTabSaysToSetIt_NotThatARestartWillHelp()
+    {
+        var (h, vm, _) = ViewModel(new ControllerHarnessOptions
+        {
+            Configure = c =>
+            {
+                c.ReshadeIniPath = null;
+                c.DetectionHotkey = Combo("F20");
+            }
+        });
+
+        Assert.Empty(h.Controller.NamesNeedingDbdRestart);
+        Assert.Equal(new[] { "Global/Menu", "Coldwind Farm" }, h.Controller.NamesWaitingForReshadeIni);
+        AssertPresetsAskForTheReshadeIni(vm, MainViewModel.ReshadeIniNotSetFlag);
+    }
+
+    /// <summary>The rows of the presets the harness assigns (Global / Menu and Coldwind Farm).</summary>
+    private static PresetRowBase[] BlockedRows(MainViewModel vm) =>
+        new PresetRowBase[] { vm.GlobalRow, vm.RealmRows.Single(r => r.RealmName == "Coldwind Farm") };
+
+    /// <summary>
+    /// ReShade.ini is not set or was not found while DBD runs: the controller says a DBD restart alone can't help, and
+    /// so must the Presets tab. Its status, the blocked rows (Global / Menu and Coldwind Farm: red, "ReShade.ini needed")
+    /// and the selected row's flag (<paramref name="flag"/>), also after the banner's "Show in Presets", ask for the
+    /// right ReShade.ini; no text there says a restart is needed.
+    /// </summary>
+    private static void AssertPresetsAskForTheReshadeIni(MainViewModel vm, string flag)
+    {
+        Assert.Equal("ReShade.ini needed", vm.PresetsTabStatus);
+        foreach (PresetRowBase row in BlockedRows(vm))
+        {
+            Assert.True(row.NeedsReshadeIni, row.DisplayName);
+            Assert.False(row.NeedsRestart, row.DisplayName);
+            Assert.Equal(RowMark.Red, row.Mark);
+            Assert.Contains("ReShade.ini needed", row.AccessibleName);
+            AssertNoRestart(row.AccessibleName);
+        }
+
+        void AssertDetail()
+        {
+            Assert.False(vm.DetailNeedsRestart);
+            Assert.Equal(flag, vm.DetailFlagText);
+            AssertNoRestart(vm.DetailFlagText);
+            AssertNoRestart(vm.DetailShortcutValue);
+            AssertNoRestart(vm.DetailPresetText);
+        }
+
+        vm.ShowRestartInPresets(); // the Status banner's action
+        Assert.True(vm.SelectedRow?.IsBlocked);
+        AssertDetail();
+        foreach (PresetRowBase row in BlockedRows(vm))
+        {
+            vm.SelectRow(row);
+            AssertDetail();
+        }
+
+        AssertNoRestart(vm.PresetsTabStatus);
+        static void AssertNoRestart(string text) => Assert.DoesNotContain("restart", text, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---------- C15: stable, transactional shortcut sync ----------
@@ -573,7 +655,7 @@ public sealed partial class ControllerActivationTests
     {
         ControllerHarness h = Harness(new ControllerHarnessOptions { Configure = c => c.DetectionHotkey = Combo("F20") });
         Assert.Equal("F20", h.Hotkey.RegisteredHotkey?.Key);
-        h.Hotkey.HoldElsewhere(Combo("F21")); // another program holds Ctrl+Alt+Shift+F21
+        h.Hotkey.HoldElsewhere(Combo("F21")); // another program holds Ctrl+Alt+F21
 
         string? error = h.Controller.UpdateHotkey(Combo("F21"));
 
@@ -596,7 +678,7 @@ public sealed partial class ControllerActivationTests
         Assert.Equal("F19", h.Hotkey.RegisteredHotkey?.Key);
         Assert.Equal("F19", h.Controller.Config.DetectionHotkey.Key);
         Assert.Equal("F19", ConfigOnDisk(h).DetectionHotkey.Key);
-        Assert.Contains("Ctrl+Shift+Alt+F19", h.Controller.DetectionText);
+        Assert.Contains("Ctrl+Alt+F19", h.Controller.DetectionText);
         Assert.False(h.Hotkey.Holds(Combo("F20"))); // the old one was released
     }
 
@@ -751,7 +833,7 @@ public sealed partial class ControllerActivationTests
     {
         ControllerHarness h = Harness(new ControllerHarnessOptions
         {
-            HotkeysHeldElsewhere = new[] { Combo("F21") }, // another program holds Ctrl+Alt+Shift+F21
+            HotkeysHeldElsewhere = new[] { Combo("F21") }, // another program holds Ctrl+Alt+F21
             Configure = c =>
             {
                 c.DetectionHotkey = Combo("F21");
@@ -762,7 +844,7 @@ public sealed partial class ControllerActivationTests
         Assert.NotNull(h.Controller.HotkeyError);
         Assert.StartsWith("Dead by Daylight detected.", h.Controller.StatusMessage);
         Assert.Contains("ReShade.ini not found", h.Controller.StatusMessage);
-        Assert.Contains("Hotkey 'Ctrl+Shift+Alt+F21' unavailable", h.Controller.StatusMessage);
+        Assert.Contains("Hotkey 'Ctrl+Alt+F21' unavailable", h.Controller.StatusMessage);
 
         // A startup warning (e.g. an ignored database override) is added as well.
         h.Controller.ReportWarning("The map database override was ignored.");

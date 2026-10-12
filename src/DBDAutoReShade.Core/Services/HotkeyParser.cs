@@ -112,6 +112,74 @@ public static class HotkeyParser
         TryParse(hotkey, out virtualKey, out modifiers, out _);
 
     /// <summary>
+    /// True when both hotkeys are the same key combination: the same modifiers
+    /// and the same key (by virtual-key code, so "f9" equals "F9"; keys that
+    /// don't parse compare by name, ignoring case). False when either is null.
+    /// Two global hotkeys of this app must never be the same combo.
+    /// </summary>
+    public static bool SameCombo(DetectionHotkeyConfig? a, DetectionHotkeyConfig? b)
+    {
+        if (a is null || b is null)
+        {
+            return false;
+        }
+
+        if (a.Ctrl != b.Ctrl || a.Shift != b.Shift || a.Alt != b.Alt)
+        {
+            return false;
+        }
+
+        if (TryParseKey(a.Key, out int keyA) && TryParseKey(b.Key, out int keyB))
+        {
+            return keyA == keyB;
+        }
+
+        return string.Equals(a.Key?.Trim(), b.Key?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// True when <paramref name="hotkey"/> is a combo this app sends to ReShade: one of
+    /// the managed shortcut pool (Ctrl+Alt+Shift + F13–F24 or 0–9, see
+    /// <see cref="ReshadeConfigurationService.IsInShortcutPool"/>), which a later
+    /// assignment may hand to any preset, or one of <paramref name="assignedShortcuts"/>
+    /// (the configured preset shortcuts). Such a combo can't be a global hotkey:
+    /// RegisterHotKey swallows a matching keystroke, injected ones included, so the
+    /// app's own preset switch would press the hotkey instead of reaching ReShade
+    /// (a Global preset hotkey on the Global preset's combo would trigger itself
+    /// over and over). False when the hotkey is null or its key doesn't parse.
+    /// </summary>
+    public static bool IsReshadeShortcutCombo(
+        DetectionHotkeyConfig? hotkey,
+        IEnumerable<ReshadeShortcutConfig?>? assignedShortcuts = null)
+    {
+        if (hotkey is null || !TryParseKey(hotkey.Key, out int virtualKey))
+        {
+            return false;
+        }
+
+        var combo = new ReshadeShortcutConfig
+        {
+            VirtualKey = virtualKey,
+            Ctrl = hotkey.Ctrl,
+            Shift = hotkey.Shift,
+            Alt = hotkey.Alt
+        };
+        return ReshadeConfigurationService.IsInShortcutPool(combo) ||
+               (assignedShortcuts?.Any(s => ReshadeConfigurationService.SameCombo(combo, s)) ?? false);
+    }
+
+    /// <summary>
+    /// Why <paramref name="hotkey"/> is refused when it is one of the app's ReShade
+    /// preset shortcut combos (<see cref="IsReshadeShortcutCombo"/>), e.g.
+    /// "Ctrl+Shift+Alt+F19 is reserved for ReShade preset shortcuts."
+    /// </summary>
+    public static string ReservedForReshadeError(DetectionHotkeyConfig hotkey)
+    {
+        ArgumentNullException.ThrowIfNull(hotkey);
+        return $"{hotkey} is reserved for ReShade preset shortcuts.";
+    }
+
+    /// <summary>
     /// Validates and resolves a hotkey. F1–F24 may be used bare (F8 is the
     /// default); letters, digits and NumPad digits need at least one of
     /// Ctrl/Alt/Shift, because RegisterHotKey swallows the key system-wide and

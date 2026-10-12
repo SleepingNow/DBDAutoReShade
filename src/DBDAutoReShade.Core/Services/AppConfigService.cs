@@ -5,7 +5,8 @@ using DBDAutoReShade.Core.Models;
 namespace DBDAutoReShade.Core.Services;
 
 /// <summary>
-/// Persists <see cref="AppConfig"/> under %AppData%\DBDAutoReShade\config.json.
+/// Persists <see cref="AppConfig"/> under %AppData%\DBDAutoReShade\config.json
+/// (or the development override, see <see cref="DataDirEnvironmentVariable"/>).
 /// Thread-safe, durable, atomic saves (unique temp file, flushed to disk, then
 /// renamed over the config). Corrupt-config recovery quarantines the bad file
 /// under a unique name and never deletes user presets; a config that cannot be
@@ -52,10 +53,41 @@ public sealed class AppConfigService
     /// </summary>
     public string? LastLoadWarning { get; private set; }
 
-    public static string DefaultAppDirectory() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
+    /// <summary>
+    /// Development only: when this environment variable names a folder, the app
+    /// keeps all its data there (config, map database, debug crops) instead of
+    /// %AppData%\DBDAutoReShade, so a live smoke test never touches the user's
+    /// real settings. Unset or blank (the default): nothing changes.
+    /// </summary>
+    public const string DataDirEnvironmentVariable = "DBDAUTORESHADE_DATA_DIR";
+
+    /// <summary>
+    /// The app's data folder: %AppData%\DBDAutoReShade, or the development
+    /// override from <see cref="DataDirEnvironmentVariable"/> when it is set.
+    /// </summary>
+    public static string DefaultAppDirectory() => ResolveAppDirectory(DataDirOverride());
 
     public static string DefaultConfigPath() => Path.Combine(DefaultAppDirectory(), ConfigFileName);
+
+    /// <summary>
+    /// The development data-folder override (<see cref="DataDirEnvironmentVariable"/>)
+    /// as a full path; null when it is not set (the default).
+    /// </summary>
+    public static string? DataDirOverride() =>
+        NormalizeDataDirOverride(Environment.GetEnvironmentVariable(DataDirEnvironmentVariable));
+
+    /// <summary>
+    /// A data-folder override as a full path (a relative one is resolved
+    /// against the current directory, never ignored: a set override must never
+    /// fall back to the real data folder); null when blank.
+    /// </summary>
+    public static string? NormalizeDataDirOverride(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : Path.GetFullPath(value.Trim());
+
+    /// <summary>The data folder for <paramref name="dataDirOverride"/>: the override itself, or %AppData%\DBDAutoReShade when null.</summary>
+    public static string ResolveAppDirectory(string? dataDirOverride) =>
+        dataDirOverride ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
 
     /// <summary>
     /// Load the config. A missing file gives defaults. Invalid JSON/data gives defaults and the
@@ -80,7 +112,7 @@ public sealed class AppConfigService
             try
             {
                 var parsed = JsonSerializer.Deserialize<AppConfig>(json!, JsonOptions);
-                Config = parsed is null ? new AppConfig() : WithSafeDictionaries(parsed);
+                Config = parsed is null ? new AppConfig() : Sanitized(parsed);
             }
             catch (Exception ex)
             {
@@ -240,9 +272,15 @@ public sealed class AppConfigService
 
     /// <summary>
     /// Re-key dictionaries case-insensitively (a hand-edited file may hold keys that differ only
-    /// by case: they merge, last one wins) and replace JSON nulls with safe defaults.
+    /// by case: they merge, last one wins), replace JSON nulls with safe defaults, clamp the
+    /// sound volume to 0..1, and disable a Global preset hotkey that has no key at all.
+    /// A missing "globalHotkey" keeps the F9 default; an explicit null stays null (cleared by
+    /// the user). A Global preset hotkey that can't be used as it is (the detection hotkey's
+    /// combo, e.g. F9 in a config saved before the Global hotkey existed, or one of the app's
+    /// ReShade shortcut combos) is kept as saved: the app refuses to register it and says why
+    /// (AppController.GlobalHotkeyError), and saving it again must not turn it into a "cleared".
     /// </summary>
-    private static AppConfig WithSafeDictionaries(AppConfig parsed)
+    private static AppConfig Sanitized(AppConfig parsed)
     {
         parsed.RealmPresets = MergeCaseInsensitive(parsed.RealmPresets);
         parsed.ReshadeShortcuts = MergeCaseInsensitive(parsed.ReshadeShortcuts);
@@ -253,6 +291,12 @@ public sealed class AppConfigService
             parsed.DetectionHotkey.Key = "F8";
         }
 
+        if (parsed.GlobalHotkey is { } global && string.IsNullOrWhiteSpace(global.Key))
+        {
+            parsed.GlobalHotkey = null;
+        }
+
+        parsed.SoundVolume = AppConfig.ClampSoundVolume(parsed.SoundVolume);
         return parsed;
     }
 

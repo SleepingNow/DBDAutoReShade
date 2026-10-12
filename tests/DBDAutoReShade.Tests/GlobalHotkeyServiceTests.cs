@@ -190,6 +190,61 @@ public sealed class GlobalHotkeyServiceTests : IDisposable
     }
 
     [Fact]
+    public void TwoServices_HoldTwoCombos_SideBySide_AndReleaseThemIndependently()
+    {
+        // Like the app's detection and Global preset hotkeys: two pump threads, two ids.
+        GlobalHotkeyService detection = NewService();
+        GlobalHotkeyService global = NewService();
+        Assert.Null(detection.Start(Combo("F21")));
+        Assert.Null(global.Start(Combo("F22")));
+        Assert.True(detection.IsRegistered);
+        Assert.True(global.IsRegistered);
+
+        // Re-registering one (a changed hotkey) leaves the other alone.
+        Assert.Null(global.Start(Combo("F22")));
+        Assert.True(detection.IsRegistered);
+        Assert.NotNull(NewService().Start(Combo("F21"))); // Windows still holds both
+        Assert.NotNull(NewService().Start(Combo("F22")));
+
+        global.Stop();
+        Assert.False(global.IsRegistered);
+        Assert.True(detection.IsRegistered);
+        Assert.NotNull(NewService().Start(Combo("F21"))); // the detection hotkey is still held…
+        Assert.Null(NewService().Start(Combo("F22"))); // …the Global one is free again
+
+        // And the combo one holds is refused to the other, as for any program.
+        Assert.Equal(GlobalHotkeyService.AlreadyInUseError, global.Start(Combo("F21")));
+    }
+
+    [Fact]
+    public void ControllerHarness_RegistersNoGlobalPresetHotkeyWithWindows()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "dbd-hotkey-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            using (ControllerHarness h = ControllerHarness.Create(
+                       dir, new ControllerHarnessOptions { Configure = c => c.GlobalHotkey = Combo("F22") }))
+            {
+                Assert.Equal("F22", h.GlobalPresetHotkey.RegisteredHotkey?.Key); // registered as far as the controller knows…
+                Assert.Null(h.Controller.GlobalHotkeyError);
+                Assert.Null(NewService().Start(Combo("F22"))); // …but Windows still has the combo free
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch
+            {
+                // Best effort.
+            }
+        }
+    }
+
+    [Fact]
     public void Dispose_ReleasesHotkey()
     {
         var svc = new GlobalHotkeyService();

@@ -3,8 +3,9 @@ using DBDAutoReShade.Core.Models;
 namespace DBDAutoReShade.Desktop.Services;
 
 /// <summary>
-/// The system-wide detection hotkey (test seam; production: <see cref="GlobalHotkeyService"/>,
-/// which registers it with Windows).
+/// One system-wide hotkey (test seam; production: <see cref="GlobalHotkeyService"/>,
+/// which registers it with Windows). The app uses two: the detection hotkey and
+/// the Global preset hotkey.
 /// </summary>
 public interface IGlobalHotkeyService : IDisposable
 {

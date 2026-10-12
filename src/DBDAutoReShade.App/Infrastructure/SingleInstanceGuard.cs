@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace DBDAutoReShade.App.Infrastructure;
 
 /// <summary>
@@ -14,6 +17,26 @@ public sealed class SingleInstanceGuard : IDisposable
     private readonly Mutex _mutex;
 
     private SingleInstanceGuard(Mutex mutex) => _mutex = mutex;
+
+    /// <summary>
+    /// The mutex name for a data folder: <see cref="DefaultName"/> for the
+    /// normal one (<paramref name="dataDirOverride"/> null), otherwise a name
+    /// derived from the development override folder (see
+    /// <c>AppConfigService.DataDirEnvironmentVariable</c>), so a test instance
+    /// on a temp folder runs next to the user's real one while two instances on
+    /// the same folder (compared case-insensitively) still exclude each other.
+    /// </summary>
+    public static string NameFor(string? dataDirOverride)
+    {
+        if (string.IsNullOrWhiteSpace(dataDirOverride))
+        {
+            return DefaultName;
+        }
+
+        string folder = dataDirOverride.Trim().TrimEnd('\\', '/').ToUpperInvariant();
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(folder));
+        return $"{DefaultName}.{Convert.ToHexString(hash, 0, 8)}";
+    }
 
     /// <summary>
     /// Returns the guard when this is the first instance, or null when another

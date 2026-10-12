@@ -120,12 +120,12 @@ public sealed partial class ControllerActivationTests
         var (h, vm, warnings) = ViewModel();
         vm.BeginHotkeyCapture();
 
-        Assert.True(vm.CaptureHotkey(Key.F19, ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift));
+        Assert.True(vm.CaptureHotkey(Key.F19, ModifierKeys.Control | ModifierKeys.Alt));
 
         Assert.False(vm.HotkeyCaptureMode);
         Assert.Equal("F19", h.Hotkey.RegisteredHotkey?.Key);
         Assert.Equal("F19", h.Controller.Config.DetectionHotkey.Key);
-        Assert.Equal("Ctrl+Shift+Alt+F19", vm.HotkeyText);
+        Assert.Equal("Ctrl+Alt+F19", vm.HotkeyText);
         Assert.Empty(warnings);
     }
 
@@ -156,7 +156,7 @@ public sealed partial class ControllerActivationTests
 
         string warning = Assert.Single(warnings);
         Assert.Contains(HotkeyParser.ModifierRequiredError, warning);
-        Assert.Contains("still Ctrl+Shift+Alt+F20", warning);
+        Assert.Contains("still Ctrl+Alt+F20", warning);
         Assert.DoesNotContain("saved", warning);
         Assert.Equal("F20", h.Hotkey.RegisteredHotkey?.Key);
         Assert.Equal("F20", h.Controller.Config.DetectionHotkey.Key);
@@ -169,10 +169,10 @@ public sealed partial class ControllerActivationTests
     {
         var (_, vm, _) = ViewModel();
 
-        Assert.Contains("Ctrl+Shift+Alt+F20", vm.ScanHelpText);
-        Assert.Contains("Ctrl+Shift+Alt+F20", vm.OverrideHelpText);
+        Assert.Contains("Ctrl+Alt+F20", vm.ScanHelpText);
+        Assert.Contains("Ctrl+Alt+F20", vm.OverrideHelpText);
         Assert.DoesNotContain("F8", vm.ScanHelpText + vm.OverrideHelpText);
-        Assert.Contains("Return to Automatic", vm.OverrideHelpText);
+        Assert.Contains("Return to automatic", vm.OverrideHelpText); // the Status button's label, as it reads
         Assert.Contains("only when the app is tracking the match", vm.OverrideHelpText);
     }
 

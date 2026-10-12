@@ -1,197 +1,204 @@
-﻿<Window x:Class="DBDAutoReShade.App.MainWindow"
+<Window x:Class="DBDAutoReShade.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:cf="clr-namespace:DBDAutoReShade.App.Controls"
+        xmlns:views="clr-namespace:DBDAutoReShade.App.Views"
         xmlns:infra="clr-namespace:DBDAutoReShade.App.Infrastructure"
-        Title="DBD Auto ReShade" Height="640" Width="600" MinHeight="520" MinWidth="480"
-        Style="{StaticResource AppWindow}">
+        Title="DBD Auto ReShade" Width="1280" Height="800" MinWidth="1024" MinHeight="680"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+        Background="{StaticResource CfNightBrush}" Foreground="{StaticResource CfBoneBrush}"
+        FontFamily="{StaticResource CfBodyFont}" FontSize="15"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal" SnapsToDevicePixels="True">
+    <!--
+        The Campfire main window (the approved prototype). Custom chrome: a 36 px title bar with the app name and real
+        minimize / maximize / close buttons. Layers, back to front (the prototype's order):
+        backdrop (the map picture, tint, halo, fog, campfire light) → the Entity's legs (top right, behind the title
+        bar and the content) → the fog bank → the content (Status / Presets / Settings) → the rail → the front fog wisp
+        (Status only) → the window controls. That paint order is the declaration order; the Tab order is the
+        prototype's instead: the rail first, then the content, then the window controls (local tab indexes).
+        Opened centred, the window is fitted to its monitor's work area (MainWindow.xaml.cs).
+    -->
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="36" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+
     <Window.Resources>
-        <infra:NullToVisibilityConverter x:Key="NullToVisibility" />
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <infra:BoolVisibilityConverter x:Key="Visible"/>
+        <infra:EnumMatchConverter x:Key="Is"/>
     </Window.Resources>
-    <Grid Margin="12">
+
+    <Grid x:Name="Root" ClipToBounds="True" KeyboardNavigation.TabNavigation="Local">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="36"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="RailColumn" Width="196"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
-        <TextBlock Grid.Row="0" Text="DBD Auto ReShade" FontSize="20" FontWeight="Bold" Margin="0,0,0,2" />
-        <TextBlock Grid.Row="0" Text="Realm-based ReShade presets for Dead by Daylight (local OCR)"
-                   Style="{StaticResource MutedText}" Margin="0,28,0,8" />
-
-        <StackPanel Grid.Row="1" Margin="0,0,0,8">
-            <Border Background="#3A2A1A" BorderBrush="#D9A441" BorderThickness="1" CornerRadius="4"
-                    Padding="8" Margin="0,0,0,6"
-                    Visibility="{Binding ShowRestartNotice, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="{Binding RestartNoticeText}" Foreground="#F2C879" TextWrapping="Wrap" />
-            </Border>
-            <Border Background="#3A1D1B" BorderBrush="#C8322B" BorderThickness="1" CornerRadius="4"
-                    Padding="8" Margin="0,0,0,6"
-                    Visibility="{Binding BannerError, Converter={StaticResource NullToVisibility}}">
-                <TextBlock Text="{Binding BannerError}" Foreground="#F0968F" TextWrapping="Wrap" />
-            </Border>
-        </StackPanel>
-
-        <TabControl Grid.Row="2">
-            <TabItem Header="Status">
-                <StackPanel Margin="6">
-                    <TextBlock Text="{Binding ScanHelpText}"
-                               Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                    <GroupBox Header="Match">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="130" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="DBD Status:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DbdStatus}" />
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Detection:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DetectionText}" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Detected Map:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DetectedMap}" />
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Detected Realm:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DetectedRealm}" />
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Active Preset:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ActivePreset}" />
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Auto Switching:" Style="{StaticResource LabelText}" />
-                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding AutoSwitching}" />
-                        </Grid>
-                    </GroupBox>
-                    <GroupBox Header="Last Activation">
-                        <TextBlock Text="{Binding LastActivation}" TextWrapping="Wrap" Style="{StaticResource MutedText}" />
-                    </GroupBox>
-                    <GroupBox Header="Manual Override">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                <ComboBox Width="250" ItemsSource="{Binding AvailableRealms}"
-                                          SelectedItem="{Binding SelectedOverrideRealm, Mode=TwoWay}"
-                                          IsEditable="False" />
-                                <Button Content="Apply" Command="{Binding ApplyOverrideCommand}" />
-                                <Button Content="Return to Automatic" Command="{Binding ReturnToAutoCommand}" />
-                            </StackPanel>
-                            <TextBlock Text="{Binding OverrideHelpText}"
-                                       Style="{StaticResource MutedText}" TextWrapping="Wrap" />
-                        </StackPanel>
-                    </GroupBox>
-                </StackPanel>
-            </TabItem>
-
-            <TabItem Header="Presets">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="6">
-                        <GroupBox Header="Global / Menu">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding GlobalPresetName}" VerticalAlignment="Center" Width="260" TextTrimming="CharacterEllipsis" />
-                                <Button Content="Change" Command="{Binding ChangeGlobalCommand}" />
-                                <Button Content="Test" Command="{Binding TestGlobalCommand}" />
-                            </StackPanel>
-                        </GroupBox>
-                        <GroupBox Header="Realms">
-                            <ItemsControl ItemsSource="{Binding RealmRows}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,3">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="190" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding RealmName}" VerticalAlignment="Center" TextWrapping="Wrap" />
-                                            <TextBlock Grid.Column="1" Text="{Binding PresetName}" VerticalAlignment="Center"
-                                                       Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" />
-                                            <Button Grid.Column="2" Content="Change" Command="{Binding SelectCommand}" />
-                                            <Button Grid.Column="3" Content="Test" Command="{Binding TestCommand}" />
-                                            <Button Grid.Column="4" Content="✕" Command="{Binding ClearCommand}" ToolTip="{Binding ClearToolTip}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </GroupBox>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-
-            <TabItem Header="Settings">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="6">
-                        <GroupBox Header="Detection Hotkey">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding HotkeyText}" VerticalAlignment="Center" Width="160" FontWeight="Bold" />
-                                    <Button Content="Change" Command="{Binding BeginHotkeyCaptureCommand}" />
-                                </StackPanel>
-                                <TextBlock Text="Press the new hotkey: F1–F24, or Ctrl/Alt/Shift + a letter, number or NumPad key. Esc cancels. (The current hotkey is paused meanwhile.)"
-                                           Style="{StaticResource MutedText}" Margin="0,6,0,0" TextWrapping="Wrap"
-                                           Visibility="{Binding HotkeyCaptureMode, Converter={StaticResource BoolToVisibility}}" />
-                            </StackPanel>
-                        </GroupBox>
-                        <GroupBox Header="Paths">
-                            <StackPanel>
-                                <TextBlock Text="Dead by Daylight" Style="{StaticResource MutedText}" />
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                    <TextBox Text="{Binding DbdPath, Mode=OneWay}" Width="360" IsReadOnly="True" />
-                                    <Button Content="Browse" Command="{Binding BrowseDbdCommand}" />
-                                </StackPanel>
-                                <TextBlock Text="ReShade.ini" Style="{StaticResource MutedText}" />
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBox Text="{Binding ReshadePath, Mode=OneWay}" Width="360" IsReadOnly="True" />
-                                    <Button Content="Browse" Command="{Binding BrowseReshadeCommand}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </GroupBox>
-                        <GroupBox Header="Behavior">
-                            <StackPanel>
-                                <CheckBox Content="Restore Global preset when the match ends" IsChecked="{Binding AutoRestore, Mode=TwoWay}" />
-                                <CheckBox IsChecked="{Binding DebugMode, Mode=TwoWay}">
-                                    <TextBlock TextWrapping="Wrap"
-                                               Text="Debug Mode: when a scan ends without a confident read (failed or stopped), save that scan's last OCR crops and their OCR text locally to %AppData%\DBDAutoReShade\debug-crops (newest 20 sets kept)" />
-                                </CheckBox>
-                            </StackPanel>
-                        </GroupBox>
-                        <GroupBox Header="Map Database">
-                            <StackPanel>
-                                <TextBlock Text="{Binding DatabaseText}" Margin="0,0,0,6" />
-                                <TextBlock Text="Update manifest URL (must be an https:// address; leave empty to disable):"
-                                           Style="{StaticResource MutedText}" TextWrapping="Wrap" />
-                                <TextBox Text="{Binding ManifestUrl, Mode=TwoWay}" Margin="0,4,0,0" />
-                                <TextBlock Text="{Binding ManifestUrlError}" Style="{StaticResource ErrorText}" Margin="0,4,0,0"
-                                           Visibility="{Binding ManifestUrlError, Converter={StaticResource NullToVisibility}}" />
-                            </StackPanel>
-                        </GroupBox>
-                        <GroupBox Header="ReShade Diagnostics">
-                            <StackPanel>
-                                <TextBlock Text="Verifies ReShade.ini, the hook DLL, stored shortcuts and preset files."
-                                           Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <Button Content="Run checks" Command="{Binding RunDiagnosticsCommand}" Margin="0,0,0,0" />
-                                    <Button Content="Copy" Command="{Binding CopyDiagnosticsCommand}" />
-                                </StackPanel>
-                                <TextBox Text="{Binding DiagnosticsReport, Mode=OneWay}" IsReadOnly="True"
-                                         FontFamily="Consolas" Height="160" AcceptsReturn="True"
-                                         VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </GroupBox>
-                        <Button Content="Reset Settings" Command="{Binding ResetSettingsCommand}"
-                                HorizontalAlignment="Left" Margin="0,4,0,0" />
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-        </TabControl>
-
-        <Border Grid.Row="3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
-                Margin="0,8,0,0" Padding="0,6,0,0">
-            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" />
+        <!-- the title bar -->
+        <Border x:Name="TitleBar" Grid.ColumnSpan="2" BorderBrush="#524A5C63" BorderThickness="0,0,0,1">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0" Color="#0A1013"/>
+                    <GradientStop Offset="1" Color="#0D1518"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <TextBlock Text="DBD Auto ReShade" Style="{StaticResource CfWindowTitle}" Margin="16,0,0,0" IsHitTestVisible="False"/>
         </Border>
+
+        <!-- the atmosphere behind everything -->
+        <cf:FogBackdrop x:Name="Backdrop" Grid.Row="1" Grid.ColumnSpan="2" Layer="Backdrop"/>
+        <cf:EntityLegs x:Name="Legs" Grid.RowSpan="2" Grid.ColumnSpan="2" Width="640" HorizontalAlignment="Right" VerticalAlignment="Top"/>
+        <cf:FogBackdrop x:Name="FogBank" Grid.RowSpan="2" Grid.ColumnSpan="2" Layer="Bank"/>
+
+        <!-- the content -->
+        <Grid x:Name="ContentHost" Grid.Row="1" Grid.Column="1" KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="1">
+            <views:StatusView x:Name="StatusPage"/>
+            <views:PresetsView x:Name="PresetsPage" Visibility="Collapsed"/>
+            <views:SettingsView x:Name="SettingsPage" Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- the rail: navigation, and the player-info corner -->
+        <Border x:Name="Rail" Grid.Row="1" Grid.Column="0" BorderBrush="#384A5C63" BorderThickness="0,0,1,0"
+                KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Offset="0" Color="#E6080D0F"/>
+                    <GradientStop Offset="0.78" Color="#9E080D0F"/>
+                    <GradientStop Offset="1" Color="#59080D0F"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <DockPanel x:Name="RailPanel" Margin="0,28,0,18">
+                <!-- the sections are one tab stop, the section shown (the nav item style makes the others no tab stops: the
+                     prototype's roving tabindex, whichever way the section changed); the arrows move between them. A
+                     named group for assistive technology ("Sections"), as is the footer ("At a glance"). -->
+                <cf:GroupStackPanel x:Name="Nav" DockPanel.Dock="Top" AutomationProperties.Name="Sections"
+                            KeyboardNavigation.DirectionalNavigation="None" KeyboardNavigation.TabNavigation="Continue"
+                            PreviewKeyDown="OnNavKeyDown" PreviewMouseLeftButtonDown="OnNavPointerDown" PreviewMouseLeftButtonUp="OnNavPointerUp">
+                    <RadioButton x:Name="StatusTab" Content="Status" GroupName="nav" Style="{StaticResource CfNavItem}"
+                                 cf:CampfireAssist.Icon="{StaticResource CfIconStatus}"
+                                 IsChecked="{Binding SelectedTab, Converter={StaticResource Is}, ConverterParameter=Status}"/>
+                    <RadioButton x:Name="PresetsTab" Content="Presets" GroupName="nav" Style="{StaticResource CfNavItem}"
+                                 cf:CampfireAssist.Icon="{StaticResource CfIconPresets}"
+                                 cf:CampfireAssist.ShowAttention="{Binding ShowRestartNotice}"
+                                 AutomationProperties.ItemStatus="{Binding PresetsTabStatus}" AutomationProperties.HelpText="{Binding PresetsTabStatus}"
+                                 IsChecked="{Binding SelectedTab, Converter={StaticResource Is}, ConverterParameter=Presets}"/>
+                    <RadioButton x:Name="SettingsTab" Content="Settings" GroupName="nav" Style="{StaticResource CfNavItem}"
+                                 cf:CampfireAssist.Icon="{StaticResource CfIconSettings}"
+                                 IsChecked="{Binding SelectedTab, Converter={StaticResource Is}, ConverterParameter=Settings}"/>
+                </cf:GroupStackPanel>
+
+                <cf:GroupBorder x:Name="RailFoot" DockPanel.Dock="Bottom" VerticalAlignment="Bottom" BorderBrush="{StaticResource CfLineBrush}" BorderThickness="0,1,0,0"
+                        Padding="26,16,16,0" AutomationProperties.Name="At a glance">
+                    <StackPanel x:Name="RailFootItems">
+                        <StackPanel>
+                            <TextBlock Text="Dead by Daylight" Style="{StaticResource CfRailKey}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                <cf:StatusDot x:Name="DbdDot" VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <cf:StatusDot.Style>
+                                        <Style TargetType="cf:StatusDot">
+                                            <Setter Property="Kind" Value="Off"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DbdRunning}" Value="True">
+                                                    <Setter Property="Kind" Value="Ember"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </cf:StatusDot.Style>
+                                </cf:StatusDot>
+                                <TextBlock x:Name="DbdStatusText" Text="{Binding DbdStatus}" Style="{StaticResource CfRailValue}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <!-- (a hotkey that is set but not registered is dimmed and its hint says so in Entity red: the
+                             key does nothing; the Status banner and Settings say why) -->
+                        <StackPanel x:Name="RailScanKey" Margin="0,14,0,0">
+                            <cf:Keycap x:Name="RailHotkey" Text="{Binding HotkeyText}" Background="#161B1D"
+                                       IsGlowing="{Binding StatusScreen.State, Converter={StaticResource Is}, ConverterParameter=Scanning}"
+                                       AutomationProperties.Name="{Binding RailHotkeyName}">
+                                <cf:Keycap.Style>
+                                    <Style TargetType="cf:Keycap">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HotkeyUnavailable}" Value="True">
+                                                <Setter Property="Opacity" Value="0.45"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </cf:Keycap.Style>
+                            </cf:Keycap>
+                            <TextBlock x:Name="RailScanHintText" Text="{Binding RailScanHint}" Margin="0,7,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource CfRailHint}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HotkeyUnavailable}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource CfEntityInkBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel x:Name="RailGlobalKey" Margin="0,14,0,0">
+                            <cf:Keycap x:Name="RailGlobalHotkey" Text="{Binding GlobalHotkeyText}" Margin="0,0,0,7"
+                                       Visibility="{Binding HasGlobalHotkey, Converter={StaticResource Visible}}"
+                                       AutomationProperties.Name="{Binding RailGlobalHotkeyName}">
+                                <cf:Keycap.Style>
+                                    <Style TargetType="cf:Keycap">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GlobalHotkeyUnavailable}" Value="True">
+                                                <Setter Property="Opacity" Value="0.45"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </cf:Keycap.Style>
+                            </cf:Keycap>
+                            <TextBlock x:Name="RailGlobalHintText" Text="{Binding RailGlobalHint}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource CfRailHint}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding GlobalHotkeyUnavailable}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource CfEntityInkBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel x:Name="RailLastSwitch" Margin="0,14,0,0">
+                            <TextBlock Text="Last switch" Style="{StaticResource CfRailKey}"/>
+                            <TextBlock x:Name="RailLastSwitchTime" Text="{Binding LastSwitchTime}" Margin="0,3,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource CfRailValue}">
+                                        <Style.Triggers>
+                                            <!-- the last attempt failed: "22:41:07, failed" in Entity red -->
+                                            <DataTrigger Binding="{Binding LastSwitchFailed}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource CfEntityInkBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                </cf:GroupBorder>
+                <Grid/>
+            </DockPanel>
+        </Border>
+
+        <!-- the front fog wisp along the bottom of the Status content -->
+        <cf:FogBackdrop x:Name="FogFront" Grid.Row="1" Grid.Column="1" Layer="Front" IsHitTestVisible="False"/>
+
+        <!-- the window controls -->
+        <StackPanel x:Name="WindowControls" Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="2">
+            <Button x:Name="MinimizeButton" Style="{StaticResource CfTitleBarButton}" cf:CampfireAssist.Icon="{StaticResource CfGlyphMinimize}"
+                    AutomationProperties.Name="Minimize" ToolTip="Minimize" Click="OnMinimize"/>
+            <Button x:Name="MaximizeButton" Style="{StaticResource CfTitleBarButton}" cf:CampfireAssist.Icon="{StaticResource CfGlyphMaximize}"
+                    AutomationProperties.Name="Maximize" ToolTip="Maximize" Click="OnMaximize"/>
+            <Button x:Name="CloseButton" Style="{StaticResource CfTitleBarCloseButton}" cf:CampfireAssist.Icon="{StaticResource CfGlyphClose}"
+                    AutomationProperties.Name="Close" ToolTip="Close" Click="OnClose"/>
+        </StackPanel>
     </Grid>
 </Window>

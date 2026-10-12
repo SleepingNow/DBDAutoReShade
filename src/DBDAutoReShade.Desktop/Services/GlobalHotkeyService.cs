@@ -6,9 +6,10 @@ using DBDAutoReShade.Desktop.Interop;
 namespace DBDAutoReShade.Desktop.Services;
 
 /// <summary>
-/// Global detection hotkey via RegisterHotKey on a dedicated thread's message
-/// queue (no window handle, no hooks, no polling). The callback fires on that
-/// pump thread.
+/// A global hotkey via RegisterHotKey on a dedicated thread's message queue (no
+/// window handle, no hooks, no polling). The callback fires on that pump
+/// thread. The app runs two instances side by side (the detection hotkey and
+/// the Global preset hotkey), each with its own pump thread and hotkey id.
 /// <para>
 /// Synchronous contract: <see cref="Start"/> returns only after the pump
 /// thread has actually called RegisterHotKey, with its real outcome (on
@@ -22,7 +23,10 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
     /// <summary>The error <see cref="Start"/> returns when another program already holds the combo.</summary>
     public const string AlreadyInUseError = "Could not register the global hotkey: it is already in use by another program.";
 
-    private const int HotkeyId = 0xD8D0;
+    // RegisterHotKey ids: each service registers under its own, so the app's
+    // two hotkeys (detection and Global preset) never share an id.
+    private const int FirstHotkeyId = 0xD8D0;
+    private static int _instanceCount = -1;
     private static readonly TimeSpan RegistrationTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(2);
 
@@ -54,6 +58,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
     }
 
     private readonly object _gate = new();
+    private readonly int _hotkeyId = FirstHotkeyId + (Interlocked.Increment(ref _instanceCount) & 0xFF);
     private volatile PumpSession? _session;
     private bool _disposed;
 
@@ -160,7 +165,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
         {
             // Called from a HotkeyPressed subscriber: we ARE the registering
             // thread, so unregister synchronously (joining ourselves would hang).
-            TryUnregister();
+            TryUnregister(_hotkeyId);
             session.IsActive = false;
             session.UnregisteredEarly = true;
         }
@@ -198,7 +203,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
         NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
         session.ThreadId = NativeMethods.GetCurrentThreadId();
 
-        bool ok = NativeMethods.RegisterHotKey(IntPtr.Zero, HotkeyId, session.Modifiers, (uint)session.VirtualKey);
+        bool ok = NativeMethods.RegisterHotKey(IntPtr.Zero, _hotkeyId, session.Modifiers, (uint)session.VirtualKey);
         int error = ok ? 0 : Marshal.GetLastPInvokeError();
         lock (session)
         {
@@ -206,7 +211,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
             {
                 if (ok)
                 {
-                    TryUnregister();
+                    TryUnregister(_hotkeyId);
                 }
 
                 return;
@@ -227,7 +232,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
         {
             while (NativeMethods.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
             {
-                if (msg.Message == WinMsg.WmHotkey && msg.WParam == (UIntPtr)HotkeyId)
+                if (msg.Message == WinMsg.WmHotkey && msg.WParam == (UIntPtr)_hotkeyId)
                 {
                     try
                     {
@@ -245,16 +250,16 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
             session.IsActive = false;
             if (!session.UnregisteredEarly)
             {
-                TryUnregister();
+                TryUnregister(_hotkeyId);
             }
         }
     }
 
-    private static void TryUnregister()
+    private static void TryUnregister(int hotkeyId)
     {
         try
         {
-            NativeMethods.UnregisterHotKey(IntPtr.Zero, HotkeyId);
+            NativeMethods.UnregisterHotKey(IntPtr.Zero, hotkeyId);
         }
         catch
         {

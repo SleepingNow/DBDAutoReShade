@@ -59,9 +59,50 @@ public sealed class AppConfig
 
     [JsonPropertyName("autoRestoreGlobalOnMenu")]
     public bool AutoRestoreGlobalOnMenu { get; set; } = true;
+
+    /// <summary>
+    /// The second global hotkey, "Switch to Global preset" (null = disabled).
+    /// New configs, and configs saved before it existed (no "globalHotkey"
+    /// property), get <see cref="DefaultGlobalHotkeyKey"/>. Clearing it saves an
+    /// explicit JSON null, which loads as null again, so "cleared" and "missing"
+    /// stay distinct. The app never registers it while it is the same combo as
+    /// <see cref="DetectionHotkey"/> or one of its ReShade shortcut combos (it
+    /// says why instead); such a value is still kept as saved.
+    /// </summary>
+    [JsonPropertyName("globalHotkey")]
+    public DetectionHotkeyConfig? GlobalHotkey { get; set; } = new() { Key = DefaultGlobalHotkeyKey };
+
+    /// <summary>Whether the UI plays its animations (storyboards, ambient loops, particles). Default on.</summary>
+    [JsonPropertyName("animationsEnabled")]
+    public bool AnimationsEnabled { get; set; } = true;
+
+    /// <summary>Whether the Great skill-check sound plays when a map is found. Default on.</summary>
+    [JsonPropertyName("soundEnabled")]
+    public bool SoundEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Volume of the Great skill-check sound, 0..1 (the amplitude is volume²).
+    /// <see cref="DefaultSoundVolume"/> on first run and for configs saved
+    /// before it existed; out-of-range values load clamped.
+    /// </summary>
+    [JsonPropertyName("soundVolume")]
+    public double SoundVolume { get; set; } = DefaultSoundVolume;
+
+    /// <summary>Key of the default Global preset hotkey (no modifiers).</summary>
+    public const string DefaultGlobalHotkeyKey = "F9";
+
+    /// <summary>The skill-check sound volume of a new (or pre-1.2) config: 50 %.</summary>
+    public const double DefaultSoundVolume = 0.5;
+
+    /// <summary><paramref name="volume"/> clamped to 0..1; a non-finite value gives <see cref="DefaultSoundVolume"/>.</summary>
+    public static double ClampSoundVolume(double volume) =>
+        double.IsFinite(volume) ? Math.Clamp(volume, 0.0, 1.0) : DefaultSoundVolume;
 }
 
-/// <summary>Global detection hotkey, e.g. F8 with optional modifiers.</summary>
+/// <summary>
+/// A global hotkey, e.g. F8 with optional modifiers: the detection hotkey, and
+/// also the Global preset hotkey (<see cref="AppConfig.GlobalHotkey"/>).
+/// </summary>
 public sealed class DetectionHotkeyConfig
 {
     [JsonPropertyName("key")]
