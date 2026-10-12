@@ -8,7 +8,7 @@ namespace DBDAutoReShade.Tests;
 /// <summary>
 /// The one focus-aware desired activation (C3), read-back verification (C4),
 /// scans without a confident read (C6), DBD exit (C7), Return to Automatic (C9)
-/// and the renewed budget once gameplay starts (C14).
+/// and an exhausted detected preset (C14: it fails for good, nothing retries it by itself, a new scan does).
 /// </summary>
 public sealed partial class ControllerActivationTests
 {
@@ -239,23 +239,38 @@ public sealed partial class ControllerActivationTests
         Assert.Equal("Automatic mode is already active.", h.Controller.StatusMessage);
     }
 
-    // ---------- C14: gameplay starting renews the budget ----------
+    // ---------- C14: an exhausted detected preset fails for good ----------
 
     [Fact]
-    public async Task ExhaustedDetectedPreset_IsRetriedWhenGameplayStarts()
+    public async Task ExhaustedDetectedPreset_FailsForGood_ThenANewScanSwitches()
     {
-        ControllerHarness h = Harness(new ControllerHarnessOptions { MaxAttempts = 2 });
+        ControllerHarness h = Harness(new ControllerHarnessOptions { MaxAttempts = 2, RetryInterval = TimeSpan.FromMilliseconds(10) });
         h.Keys.NextResult = false;
 
-        await h.Controller.TriggerDetectionAsync();
-        Assert.False(h.Controller.RetryPendingActivation()); // second rejection: exhausted
-        Assert.Contains("Press F8 to retry", h.Controller.StatusMessage);
-        Assert.Equal(AppState.WaitingForGameplay, h.States.State);
+        await h.Controller.TriggerDetectionAsync(); // first rejection; the worker makes the second
+        await ControllerHarness.WaitUntilAsync(() => !h.Controller.HasPendingActivation, "the send budget is spent");
 
+        // Nothing would ever retry it (no gameplay detection renews the budget), so it is not left pending as
+        // "waiting for you to click into the game": the app is Ready and the status says how to recover.
+        Assert.Equal(AppState.Ready, h.States.State);
+        Assert.Equal(2, h.Keys.CallCount);
+        Assert.StartsWith($"Could not switch to {Path.GetFileName(h.ColdwindIni)}:", h.Controller.StatusMessage);
+        Assert.Contains("Press F8 on a loading screen to try again, or use the manual override.", h.Controller.StatusMessage);
+
+        // Time passes and Windows would accept the keys now: still no key goes out by itself.
         h.Keys.NextResult = true;
-        h.DriveToTrial(); // gameplay starts: fresh budget, immediate try
+        h.Advance(TimeSpan.FromMinutes(30));
+        await Task.Delay(200);
+        Assert.True(h.Controller.RetryPendingActivation()); // nothing pending
+        Assert.Equal(2, h.Keys.CallCount);
+        Assert.Equal(AppState.Ready, h.States.State);
+        Assert.False(h.Controller.HasPendingActivation);
+        Assert.Null(h.Controller.ActivePresetPath);
+
+        await h.Controller.TriggerDetectionAsync(); // F8 on the loading screen: a fresh attempt
         Assert.Equal(AppState.PresetActive, h.States.State);
         Assert.Equal(h.ColdwindIni, h.Controller.ActivePresetPath);
+        Assert.Equal(3, h.Keys.CallCount);
     }
 
     // ---------- C9: Return to Automatic ----------
@@ -331,14 +346,13 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task StoppedScan_AfterAGlobalRestoreReshadeIgnored_SendsGlobalAgain()
+    public async Task StoppedScan_AfterAGlobalSwitchReshadeIgnored_SendsGlobalAgain()
     {
         // The read-back runs right after each send (no wait).
         ControllerHarness h = Harness(new ControllerHarnessOptions { VerifyDelayMs = 0 });
         await h.Controller.TriggerDetectionAsync();
         h.ReshadeSaves(@".\" + Path.GetFileName(h.ColdwindIni)); // ReShade switched (it saves paths relative to its folder)
-        h.DriveToTrial();
-        h.DriveToMenus(); // match end: the Global keys go out, but ReShade ignores them
+        h.GlobalPresetHotkey.Press(); // F9 back in the menus: the Global keys go out, but ReShade ignores them
         Assert.Contains("hasn't confirmed the switch", h.Controller.StatusMessage);
         Assert.Equal(h.ColdwindIni, h.ReshadeStartupPreset()); // ReShade still runs the realm preset
 
@@ -426,9 +440,9 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task DbdExit_WithAutoRestoreOff_LeavesReshadeIniAlone()
+    public async Task DbdExit_WithStartNextGameWithGlobalOff_LeavesReshadeIniAlone()
     {
-        ControllerHarness h = Harness(new ControllerHarnessOptions { Configure = c => c.AutoRestoreGlobalOnMenu = false });
+        ControllerHarness h = Harness(new ControllerHarnessOptions { Configure = c => c.StartNextGameWithGlobal = false });
         await h.Controller.TriggerDetectionAsync();
         h.ReshadeSaves(h.ColdwindIni);
 
@@ -453,14 +467,13 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task DbdExit_AfterAGlobalRestoreReshadeIgnored_StillWritesGlobal()
+    public async Task DbdExit_AfterAGlobalSwitchReshadeIgnored_StillWritesGlobal()
     {
         // The read-back runs right after each send (no wait).
         ControllerHarness h = Harness(new ControllerHarnessOptions { VerifyDelayMs = 0 });
         await h.Controller.TriggerDetectionAsync();
         h.ReshadeSaves(@".\" + Path.GetFileName(h.ColdwindIni)); // ReShade switched (it saves paths relative to its folder)
-        h.DriveToTrial();
-        h.DriveToMenus(); // match end: the Global keys go out, but ReShade ignores them
+        h.GlobalPresetHotkey.Press(); // F9: the Global keys go out, but ReShade ignores them
 
         Assert.Equal(new[] { "Coldwind Farm", AppConfigKeys.GlobalShortcutKey }, h.SentNames());
         Assert.Equal(h.GlobalIni, h.Controller.ActivePresetPath); // what the app sent…
@@ -475,16 +488,15 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task DbdExit_AfterAConfirmedGlobalRestore_KeepsThePresetTheUserPickedSince()
+    public async Task DbdExit_AfterAConfirmedGlobalSwitch_KeepsThePresetTheUserPickedSince()
     {
         ControllerHarness h = Harness(new ControllerHarnessOptions { VerifyDelayMs = 10_000 });
         await h.Controller.TriggerDetectionAsync();
         h.ReshadeSaves(h.ColdwindIni);
-        h.DriveToTrial();
-        h.DriveToMenus(); // match end: Global restored…
+        h.GlobalPresetHotkey.Press(); // F9: Global switched…
         h.ReshadeSaves(h.GlobalIni);
         await ControllerHarness.WaitUntilAsync(
-            () => h.Controller.StatusMessage.Contains("confirmed by ReShade"), "Global restore confirmed");
+            () => h.Controller.StatusMessage.Contains("confirmed by ReShade"), "Global switch confirmed");
 
         h.ReshadeSaves(h.ColdwindIni); // …then the user picked a preset in the ReShade overlay
         h.Dbd.IsRunning = false;
@@ -517,8 +529,7 @@ public sealed partial class ControllerActivationTests
         await Task.Run(coldwind.SetResult); // opened from a pool thread: the read-back runs to its end inline
         Assert.Contains("confirmed by ReShade", h.Controller.StatusMessage);
 
-        h.DriveToTrial();
-        h.DriveToMenus(); // match end: the Global keys go out → read-back pending
+        h.GlobalPresetHotkey.Press(); // F9: the Global keys go out → read-back pending
         Assert.Equal(new[] { "Coldwind Farm", AppConfigKeys.GlobalShortcutKey }, h.SentNames());
         h.Controller.ReturnToAutomatic(); // something unrelated the user did meanwhile
         h.ReshadeSaves(@".\" + Path.GetFileName(h.GlobalIni)); // ReShade switched

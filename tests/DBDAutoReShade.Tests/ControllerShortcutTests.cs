@@ -2,7 +2,6 @@ using DBDAutoReShade.App.Services;
 using DBDAutoReShade.App.ViewModels;
 using DBDAutoReShade.Core.Models;
 using DBDAutoReShade.Core.Services;
-using DBDAutoReShade.Desktop.Services;
 
 namespace DBDAutoReShade.Tests;
 
@@ -722,7 +721,7 @@ public sealed partial class ControllerActivationTests
         h.Controller.SetDebug(true);
         Assert.StartsWith("Could not save settings", h.Controller.StatusMessage);
 
-        h.Controller.SetAutoRestore(false);
+        h.Controller.SetStartNextGameWithGlobal(false);
         Assert.StartsWith("Could not save settings", h.Controller.StatusMessage);
 
         Assert.Null(h.Controller.SetManifestUrl("https://example.com/manifest.json"));
@@ -747,8 +746,8 @@ public sealed partial class ControllerActivationTests
         string mine = Path.Combine(h.Dir, "my-own-preset.ini");
         AddForeignShortcut(h, 0x41, mine); // the user's own Ctrl+Alt+Shift+A
 
-        await h.Controller.TriggerDetectionAsync(); // a tracked match…
-        Assert.Equal(LifecyclePhase.WatchingForTrial, h.Lifecycle.Phase);
+        await h.Controller.TriggerDetectionAsync(); // a detected preset…
+        Assert.Equal(AppState.PresetActive, h.States.State);
         h.Focused = false;
         h.Controller.ApplyManualOverride("Coldwind Farm"); // …and a pending override
         Assert.True(h.Controller.HasPendingActivation);
@@ -770,11 +769,10 @@ public sealed partial class ControllerActivationTests
         Assert.Equal(h.ReshadeIni, ConfigOnDisk(h).ReshadeIniPath);
         Assert.Null(ConfigOnDisk(h).GlobalPresetPath);
 
-        // Runtime: nothing pending, not overriding, the match no longer tracked.
+        // Runtime: nothing pending, not overriding, the active preset unknown again.
         Assert.Equal(AppState.Ready, h.States.State);
         Assert.False(h.Controller.IsManualOverride);
         Assert.False(h.Controller.HasPendingActivation);
-        Assert.Equal(LifecyclePhase.Unknown, h.Lifecycle.Phase);
         Assert.Null(h.Controller.ActivePresetPath);
         Assert.StartsWith("Settings reset to defaults.", h.Controller.StatusMessage);
 

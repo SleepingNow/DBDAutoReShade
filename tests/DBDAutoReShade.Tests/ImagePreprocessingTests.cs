@@ -59,25 +59,6 @@ public sealed class ImagePreprocessingTests
     }
 
     [Fact]
-    public void ThumbnailDistance_IdenticalIsZero_DifferentIsPositive()
-    {
-        using var a = WhiteTextOnBlack();
-        using var b = WhiteTextOnBlack();
-        byte[] ta = ImagePreprocessingService.Thumbnail32(a);
-        byte[] tb = ImagePreprocessingService.Thumbnail32(b);
-        Assert.Equal(0, ImagePreprocessingService.ThumbnailDistance(ta, tb));
-
-        // Invert b: distance must be large.
-        for (int i = 0; i < tb.Length; i++)
-        {
-            tb[i] = (byte)(255 - tb[i]);
-        }
-
-        Assert.True(ImagePreprocessingService.ThumbnailDistance(ta, tb) > 100);
-        Assert.Equal(32 * 32, ta.Length);
-    }
-
-    [Fact]
     public void CapturedImage_RejectsBadBuffer()
     {
         Assert.Throws<ArgumentException>(() => new CapturedImage(4, 4, new byte[10]));
@@ -168,25 +149,6 @@ public sealed class ImagePreprocessingTests
 
         Assert.Equal(0, textWrong);
         Assert.Equal(0, backgroundWrong);
-    }
-
-    // ---- A2: Thumbnail32 samples luma directly; output must be byte-identical ----
-
-    [Theory]
-    [InlineData(1, 1)]
-    [InlineData(7, 5)]
-    [InlineData(32, 32)]
-    [InlineData(33, 31)]
-    [InlineData(640, 360)]
-    [InlineData(1921, 1081)]
-    public void Thumbnail32_MatchesFullFrameGrayscaleReference(int w, int h)
-    {
-        var rng = new Random(w * 31 + h);
-        var px = new byte[w * h * 4];
-        rng.NextBytes(px);
-        using var img = new CapturedImage(w, h, px);
-
-        Assert.Equal(ReferenceThumbnail32(img), ImagePreprocessingService.Thumbnail32(img));
     }
 
     // ---- A3: preprocessing knobs are honoured; defaults reproduce the classic pipeline ----
@@ -384,24 +346,6 @@ public sealed class ImagePreprocessingTests
         }
 
         return threshold;
-    }
-
-    /// <summary>The original Thumbnail32: grayscale the whole frame, then point-sample 32x32.</summary>
-    private static byte[] ReferenceThumbnail32(CapturedImage image)
-    {
-        byte[] gray = ImagePreprocessingService.ToGrayscale(image);
-        var thumb = new byte[32 * 32];
-        for (int y = 0; y < 32; y++)
-        {
-            int sy = y * image.Height / 32;
-            for (int x = 0; x < 32; x++)
-            {
-                int sx = x * image.Width / 32;
-                thumb[y * 32 + x] = gray[sy * image.Width + sx];
-            }
-        }
-
-        return thumb;
     }
 
     /// <summary>The original per-pixel ContrastStretch, kept to prove the lookup-table version is identical.</summary>

@@ -252,8 +252,8 @@ public static class Anim
     /// A WAAPI keyframe effect reproduced exactly (the prototype's <c>A(el, frames, { duration, easing })</c>): the
     /// iteration's progress is eased by <paramref name="iterationEasing"/> (the prototype's default is ease-out; null =
     /// linear), then each segment by the easing of the keyframe it leaves. A WPF key frame eases its segment in linear
-    /// time, which cannot express an eased iteration over several keyframes (the yank that returns by 500 ms, not by
-    /// 1.5 s), so the curve is sampled at 60 per second as linear key frames. The first value is held during
+    /// time, which cannot express an eased iteration over several keyframes (the flinch's early peak lands well before
+    /// its linear share of the time), so the curve is sampled at 60 per second as linear key frames. The first value is held during
     /// <paramref name="delayMs"/> (fill backwards).
     /// </summary>
     public static DoubleAnimationUsingKeyFrames Waapi(double durationMs, KeySpline? iterationEasing, IReadOnlyList<WaapiKf> frames, double delayMs = 0)

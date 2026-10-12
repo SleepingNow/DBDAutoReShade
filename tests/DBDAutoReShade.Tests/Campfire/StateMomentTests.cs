@@ -245,9 +245,9 @@ public sealed class StateMomentTests
     [InlineData(1100, 0.0)]
     public void Waapi_ReproducesAnEasedIteration_OverSeveralKeyframes(double ms, double expected)
     {
-        // the Entity's yank at match end: 0 (ease-in-out) -> 1 at .28 -> 1 at .46 (ease-out) -> 0, 2 s eased out
-        var yank = new[] { new WaapiKf(0, 0, Ease.InOut), new WaapiKf(0.28, 1), new WaapiKf(0.46, 1, Ease.Out), new WaapiKf(1, 0) };
-        Assert.Equal(expected, Anim.WaapiValue(yank, Ease.Out, ms / 2000), 2);
+        // a rise, a held beat and a return: 0 (ease-in-out) -> 1 at .28 -> 1 at .46 (ease-out) -> 0, 2 s eased out
+        var curve = new[] { new WaapiKf(0, 0, Ease.InOut), new WaapiKf(0.28, 1), new WaapiKf(0.46, 1, Ease.Out), new WaapiKf(1, 0) };
+        Assert.Equal(expected, Anim.WaapiValue(curve, Ease.Out, ms / 2000), 2);
     }
 
     [Fact]

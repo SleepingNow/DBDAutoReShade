@@ -114,7 +114,7 @@ public sealed partial class MainViewModel
     public string DetailTagText { get => _detailTagText; private set => SetProperty(ref _detailTagText, value); }
 
     /// <summary>What Global / Menu is used for.</summary>
-    public string GlobalExplain => "Used in menus, for realms without a preset, after an unsure scan and when a match ends.";
+    public string GlobalExplain => "Used for realms without a preset, after an unsure scan, and whenever you switch back with the Global preset hotkey (e.g. in the menus).";
 
     /// <summary>The hero picture's map (null for Global / Menu: the campfire clearing).</summary>
     public string? HeroMap { get => _heroMap; private set => SetProperty(ref _heroMap, value); }

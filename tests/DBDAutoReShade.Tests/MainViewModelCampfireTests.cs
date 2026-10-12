@@ -360,6 +360,26 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
+    public async Task AnExhaustedDetectedPreset_IsNotShownAsWaitingForFocus()
+    {
+        // Windows rejects the send and the budget (1 here) is spent: nothing will retry it (no gameplay detection),
+        // so the screen must not keep saying "click into the game" with a pending "Next:" tail and a ringed row.
+        var (h, vm, _) = ViewModel(new ControllerHarnessOptions { MaxAttempts = 1, Configure = c => c.DetectionHotkey = Combo("F20") });
+        h.Keys.NextResult = false;
+        await h.Controller.TriggerDetectionAsync();
+        vm.Refresh();
+
+        Assert.False(h.Controller.HasPendingActivation);
+        StatusScreen screen = vm.StatusScreen;
+        Assert.Equal(ScreenState.Ready, screen.State);
+        Assert.Equal("Ready", screen.Hero);
+        Assert.NotEqual(PresetTail.Pending, screen.Tail);
+        Assert.NotEqual(PlateTag.WaitingForFocus, screen.Tag);
+        Assert.Contains("Press Ctrl+Alt+F20 on a loading screen to try again, or use the manual override.", h.Controller.StatusMessage);
+        Assert.All(vm.RealmRows, row => Assert.NotEqual(RowMark.Ring, row.Mark));
+    }
+
+    [Fact]
     public async Task StatusScreen_TellsTheStates_WithTheAppsRealTexts()
     {
         var (h, vm, _) = ViewModel();

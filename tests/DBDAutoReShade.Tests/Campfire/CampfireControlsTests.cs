@@ -101,7 +101,7 @@ public sealed class CampfireControlsTests
             Assert.Null(plate.Campfire);
             Assert.True(plate.Picture!.HasPicture);
 
-            plate.Sink(PlateScene.Lobby(FireState.Burning, "Global preset restored", "Last match: MacMillan Estate."));
+            plate.Sink(PlateScene.Lobby(FireState.Burning, "No map detected yet", "Global / Menu is on. Press F8 on the loading screen."));
             Assert.NotNull(plate.Campfire);
             Assert.Empty(MotionDiagnostics.FindAnimatedObjects(plate));
         });
@@ -662,7 +662,6 @@ public sealed class CampfireControlsTests
             legs.Lean(true);
             Assert.True(legs.IsLeaning);
             legs.Lean(false);
-            legs.Retract();
             legs.RimRun();
             Assert.Empty(MotionDiagnostics.FindAnimatedObjects(legs));
         });

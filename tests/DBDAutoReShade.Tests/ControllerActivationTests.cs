@@ -98,7 +98,7 @@ public sealed partial class ControllerActivationTests : IDisposable
         while (DateTime.UtcNow < deadline)
         {
             message = h.Controller.StatusMessage;
-            if (message.Contains("press F8 to retry", StringComparison.OrdinalIgnoreCase))
+            if (message.Contains("Press F8 on a loading screen to try again", StringComparison.Ordinal))
             {
                 break;
             }
@@ -106,8 +106,14 @@ public sealed partial class ControllerActivationTests : IDisposable
             await Task.Delay(25);
         }
 
-        Assert.Contains("press F8 to retry", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(AppState.WaitingForGameplay, h.States.State); // still recoverable via F8
+        Assert.Contains("Press F8 on a loading screen to try again, or use the manual override.", message);
+        Assert.Equal(AppState.Ready, h.States.State); // final: nothing left waiting for focus
+        Assert.False(h.Controller.HasPendingActivation);
+
+        h.Keys.NextResult = true; // recoverable via F8 on the loading screen
+        await h.Controller.TriggerDetectionAsync();
+        Assert.Equal(AppState.PresetActive, h.States.State);
+        Assert.Equal(h.ColdwindIni, h.Controller.ActivePresetPath);
     }
 
     [Fact]

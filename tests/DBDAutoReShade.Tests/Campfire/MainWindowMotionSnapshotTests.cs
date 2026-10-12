@@ -75,13 +75,9 @@ public sealed class MainWindowMotionSnapshotTests : IDisposable
             s => s.Window.PresentedScreen?.State == ScreenState.Active, new[] { 0, 200, 450, 700, 950, 1400 },
             thenWaitFor: s => s.Window.PresentedScreen?.Tail == PresetTail.Confirmed); // ("Confirmed by ReShade" arrives as it reads back)
 
-        StateStory("sink", "active -> matchEnded: the picture sinks into the fog, the Entity yanks up and eases back, the clearing returns", "active",
-            s => _ = Task.Run(() =>
-            {
-                s.Harness.DriveToTrial();
-                s.Harness.DriveToMenus();
-            }),
-            s => s.Window.PresentedScreen?.State == ScreenState.MatchEnded, new[] { 0, 250, 500, 750, 1100, 2100 });
+        StateStory("sink", "active -> ready (F9 to Global): the picture sinks into the fog, the clearing returns", "active",
+            s => _ = Task.Run(() => s.Harness.GlobalPresetHotkey.Press()),
+            s => s.Window.PresentedScreen?.State == ScreenState.Ready, new[] { 0, 250, 500, 750, 1100, 2100 });
 
         StateStory("dieout", "ready -> waiting: the fire dies out, the light lingers and goes, the hero cools", "ready",
             s => _ = Task.Run(() =>

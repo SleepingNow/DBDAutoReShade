@@ -43,15 +43,6 @@ public sealed class PresetDecisionTests
     }
 
     [Fact]
-    public void MatchEnd_RestoresGlobal()
-    {
-        var svc = new PresetDecisionService();
-        PresetDecision d = svc.DecideOnMatchEnd(Config());
-        Assert.True(d.IsGlobal);
-        Assert.Equal(@"C:\Presets\Global.ini", d.PresetPath);
-    }
-
-    [Fact]
     public void ManualOverride_ConfiguredRealm_ActivatesIt()
     {
         var svc = new PresetDecisionService();
@@ -86,14 +77,9 @@ public sealed class PresetDecisionTests
     }
 
     [Fact]
-    public void ManualOverride_ClearsOnMatchEnd()
+    public void NoMatchEndDecision_Exists()
     {
-        // Override takes precedence during the match; match end returns to Global.
-        var svc = new PresetDecisionService();
-        var config = Config();
-        PresetDecision during = svc.DecideManualOverride("MacMillan Estate", config);
-        PresetDecision after = svc.DecideOnMatchEnd(config);
-        Assert.False(during.IsGlobal);
-        Assert.True(after.IsGlobal);
+        // 1.2.1: the app no longer guesses when a match ends, so nothing decides a "match end" preset.
+        Assert.DoesNotContain(typeof(PresetDecisionService).GetMethods(), m => m.Name.Contains("MatchEnd", StringComparison.Ordinal));
     }
 }

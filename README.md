@@ -2,7 +2,7 @@
 
 **Automatic per-map ReShade presets for Dead by Daylight.** Press **F8** on the loading
 screen and the app reads the map name, works out the realm and switches ReShade to your
-preset for it. When the match ends you're back on your Global/Menu preset.
+preset for it. Press **F9** to go back to your Global/Menu preset whenever you want.
 
 ![The Status page with a preset active on MacMillan Estate](docs/screenshots/status.png)
 
@@ -11,9 +11,9 @@ preset for it. When the match ends you're back on your Global/Menu preset.
 - **One preset per realm.** All 20 realms and 44 maps are built in, each shown with its map
   pictures so you can tell them apart at a glance.
 - **Hands-free switching.** The preset changes the moment the map is read, and ReShade
-  confirms it. At the end of the match it goes back to Global.
+  confirms it. It stays on until you switch again.
 - **F9 = Global, anytime.** A second hotkey switches straight back to your Global/Menu
-  preset, even mid-match.
+  preset: after the match, or even mid-match.
 - **Dead by Daylight look and feel.** A foggy campfire window, the Entity watching from the
   corner, and a skill check that lands a **Great** (with the sound) when the map is found.
 - **Light on your game.** Every animation pauses while you're playing, and **Play
@@ -53,8 +53,10 @@ see [Troubleshooting](#troubleshooting).
 2. Assign a preset to each realm you care about under **Presets**.
 3. On the loading screen, press **F8**. The skill check spins until the map is read, then
    lands a Great, and your realm's preset switches on.
-4. Play. When the match ends, the app switches back to your Global preset.
-5. Press **F9** whenever you want the Global preset right away.
+4. Play. Your realm's preset stays on for the whole match; the app doesn't try to guess
+   when a match ends.
+5. Back in the menus, press **F9** for your Global preset (it works any time), or press
+   **F8** on the next loading screen.
 
 A few things to know:
 - DBD has to be the active window for a switch. If you were tabbed out, the app waits and
@@ -62,14 +64,14 @@ A few things to know:
 - ReShade only loads new shortcuts when the game starts. After assigning a new preset while
   DBD is running, restart DBD once; the app tells you which presets are waiting for that.
 - **Manual override** (bottom of the Status page) forces a realm's preset until you press
-  **Return to automatic**, start a new scan, or close DBD.
+  **Return to automatic**, start a new scan (**F8**), press **F9**, or close DBD.
 - **Test** on the Presets page tries a preset in game: you get 15 seconds to click into DBD.
 
 ## Hotkeys
 | Key | What it does |
 | --- | --- |
 | **F8** | Start scanning the loading screen. Press again to stop. |
-| **F9** | Switch to your Global/Menu preset now. |
+| **F9** | Switch to your Global/Menu preset now (e.g. when the match is over). |
 
 Both can be changed under **Settings**: F1–F24 on their own, or letters/numbers with
 Ctrl, Alt or Shift. The Global hotkey can also be turned off with **Clear**.
@@ -77,7 +79,8 @@ Ctrl, Alt or Shift. The Global hotkey can also be turned off with **Clear**.
 ## Settings
 ![The Behaviour section of Settings](docs/screenshots/settings.png)
 
-- **Restore the Global preset when a match ends.** On by default.
+- **Start the next game with the Global preset.** When Dead by Daylight closes, the app
+  sets your Global preset as ReShade's startup preset. On by default.
 - **Play animations.** Turn off to save performance. Animations also stop on their own
   while the window isn't active, and when Windows animation effects are off.
 - **Play the Great skill-check sound when a map is found**, with a **Play sound** preview.
@@ -97,6 +100,8 @@ checks that ReShade really changed preset.
 Keep ReShade's **Force correct modifier keys** option on (ReShade's default).
 
 ## Troubleshooting
+- **The realm's preset is still on after the match.** That's intended: the app doesn't
+  watch the match. Press **F9** for your Global preset.
 - **The map was read but the preset didn't change.** Read the status line on the Status
   page; it says exactly what's missing. Usually DBD wasn't the active window (click into
   the game), or ReShade still needs a game restart to load a new shortcut.
@@ -118,8 +123,11 @@ Keep ReShade's **Force correct modifier keys** option on (ReShade's default).
 Everything runs on your PC. Screen captures, OCR text and decisions never leave the
 machine, and there is no telemetry.
 
-The app only enumerates processes (query-only access), captures the screen, reads text
-with Windows' built-in OCR, edits `ReShade.ini`, registers hotkeys and sends keystrokes.
+The app only enumerates processes (query-only access), captures Dead by Daylight's window
+(only while a scan runs, and it reads only the map and realm name areas of the loading
+screen; in fullscreen it may grab the whole game frame in memory to cut those areas out,
+and nothing else is kept), reads text with Windows' built-in OCR, edits `ReShade.ini`,
+registers hotkeys and sends keystrokes.
 
 It never reads or writes game memory, injects, hooks, patches, uses drivers, sniffs
 traffic or uses cloud OCR.

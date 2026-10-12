@@ -104,7 +104,7 @@ public sealed class AppConfigSettingsTests : IDisposable
         Assert.Equal(@"G:\Presets\Global.ini", config.GlobalPresetPath);
         Assert.Equal(@"G:\Presets\Coldwind.ini", config.RealmPresets["coldwind farm"]);
         Assert.Equal(124, config.ReshadeShortcuts[AppConfigKeys.GlobalShortcutKey].VirtualKey);
-        Assert.False(config.AutoRestoreGlobalOnMenu);
+        Assert.False(config.StartNextGameWithGlobal); // its old "autoRestoreGlobalOnMenu": false
         Assert.Equal(3, config.DatabaseVersion);
 
         // Saved again: written out explicitly, and it loads the same.
@@ -117,6 +117,31 @@ public sealed class AppConfigSettingsTests : IDisposable
         AppConfig again = Reload().Config;
         Assert.Equal("F9", again.GlobalHotkey?.ToString());
         Assert.Equal(0.5, again.SoundVolume);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    public void OldAutoRestoreSetting_LoadsAsStartNextGameWithGlobal_AndKeepsItsJsonName(string stored, bool expected)
+    {
+        // 1.0–1.2.0 saved the checkbox "Restore the Global preset when a match ends" as autoRestoreGlobalOnMenu.
+        // 1.2.1 keeps the key for "Start the next game with the Global preset" (it always gated the DBD-exit
+        // write as well), so an existing choice carries over, both ways.
+        AppConfigService svc = LoadFrom($"{{ \"setupCompleted\": true, \"autoRestoreGlobalOnMenu\": {stored} }}");
+        Assert.Equal(expected, svc.Config.StartNextGameWithGlobal);
+
+        svc.Save();
+        string json = File.ReadAllText(ConfigPath);
+        Assert.Contains($"\"autoRestoreGlobalOnMenu\": {stored}", json);
+        Assert.DoesNotContain("startNextGameWithGlobal", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(expected, Reload().Config.StartNextGameWithGlobal);
+    }
+
+    [Fact]
+    public void StartNextGameWithGlobal_IsOnByDefault_AlsoForAConfigWithoutIt()
+    {
+        Assert.True(new AppConfig().StartNextGameWithGlobal);
+        Assert.True(LoadFrom("{ \"setupCompleted\": true }").Config.StartNextGameWithGlobal);
     }
 
     [Fact]

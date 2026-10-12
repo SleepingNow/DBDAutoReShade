@@ -137,7 +137,7 @@ public partial class StatusView : UserControl
         SkillCheck skill = Plate.SkillCheck;
         skill.KeyText = next.HotkeyText;
         skill.EnterDelay = next.SkillCheck == SkillCheckState.Scanning && previous?.Plate.IsMap == true
-            ? TimeSpan.FromMilliseconds(480) // back from a match: the map sinks first, then the check appears
+            ? TimeSpan.FromMilliseconds(480) // a new scan while a map is shown: the map sinks first, then the check appears
             : TimeSpan.Zero;
         bool confirming = !quick && previous is { State: ScreenState.WaitingFocus } && next.State == ScreenState.Active && Equals(previous.Plate, next.Plate);
         if (!Equals(Plate.Scene, next.Plate))

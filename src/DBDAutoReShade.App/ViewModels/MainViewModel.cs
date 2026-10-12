@@ -18,8 +18,11 @@ namespace DBDAutoReShade.App.ViewModels;
 /// </summary>
 public sealed partial class MainViewModel : ObservableObject
 {
-    /// <summary>The Settings checkbox that restores the Global preset at the match end (its label, quoted by help texts).</summary>
-    public const string AutoRestoreLabel = "Restore the Global preset when a match ends";
+    /// <summary>The Settings checkbox that makes Global ReShade's startup preset when Dead by Daylight closes (its label).</summary>
+    public const string StartWithGlobalLabel = "Start the next game with the Global preset";
+
+    /// <summary>The hint under <see cref="StartWithGlobalLabel"/> (and its help text): what the setting does.</summary>
+    public const string StartWithGlobalHint = "When Dead by Daylight closes, the app sets your Global preset as ReShade's startup preset.";
 
     /// <summary>Shown when the captured key can't be a detection hotkey.</summary>
     public const string UnsupportedHotkeyMessage =
@@ -137,14 +140,20 @@ public sealed partial class MainViewModel : ObservableObject
         "Scanning stops by itself once the map is read.";
 
     /// <summary>
-    /// When a manual override ends (truthful: the match end clears it only while the match is tracked); it quotes the
-    /// Settings checkbox (<see cref="AutoRestoreLabel"/>).
+    /// When a manual override ends: only when the user ends it (Return to automatic, a new scan, the Global preset
+    /// hotkey) or Dead by Daylight closes. The app does not watch the match, so a match ending changes nothing.
     /// </summary>
     public string OverrideHelpText =>
-        $"An override stays until Return to automatic, a new scan ({HotkeyText}) or DBD exit. " +
-        $"It also clears at the match end, but only when the app is tracking the match (after a detection with {HotkeyText}) " +
-        $"and \"{AutoRestoreLabel}\" is on. \"{GlobalPresetRow.Label}\" forces nothing: it switches to the Global preset now, " +
+        $"An override stays until Return to automatic, a new scan ({HotkeyText}), {GlobalHotkeyPhrase} or DBD exit. " +
+        $"\"{GlobalPresetRow.Label}\" forces nothing: it switches to the Global preset now, " +
         "stops a running scan and keeps automatic switching on.";
+
+    /// <summary>
+    /// "the Global preset hotkey (F9)" while that hotkey works; "Switch to Global" (the override bar's button) while
+    /// none is set or it is unavailable (<see cref="GlobalHotkeyUnavailable"/>: pressing it does nothing in this app).
+    /// </summary>
+    private string GlobalHotkeyPhrase =>
+        HasGlobalHotkey && !GlobalHotkeyUnavailable ? $"the Global preset hotkey ({GlobalHotkeyText})" : "\"Switch to Global\"";
 
     /// <summary>The map behind the fog: the Status screen's (detected or forced realm), the Presets hero map, or none.</summary>
     public string? BackdropMap => SelectedTab switch

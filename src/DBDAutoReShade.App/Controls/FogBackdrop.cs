@@ -27,7 +27,7 @@ public enum FogLayer
 /// The fog. As <see cref="FogLayer.Backdrop"/>: the selected map's picture darkened (60 %) and blurred, the tint,
 /// a cold halo, two fog layers drifting slowly (80 s / 64 s, ambient), and the campfire's warm light low on the left
 /// whose strength is <see cref="EmberLevel"/> (one per state: waiting 0, ready .5, scanning .55, waiting for focus .72,
-/// active 1, paused .22, match ended .5) and which <see cref="Flare"/> swells once. As <see cref="FogLayer.Bank"/> and
+/// active 1, paused .22, override .72, error .22) and which <see cref="Flare"/> swells once. As <see cref="FogLayer.Bank"/> and
 /// <see cref="FogLayer.Front"/>: the fog that sits over the legs and along the bottom. Drift is ambient: it holds in
 /// place whenever the <see cref="MotionPolicy"/> forbids ambient motion.
 /// </summary>

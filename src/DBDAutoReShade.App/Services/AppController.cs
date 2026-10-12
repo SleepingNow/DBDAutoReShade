@@ -7,14 +7,25 @@ using System.IO;
 namespace DBDAutoReShade.App.Services;
 
 /// <summary>
-/// Application glue: DBD monitor → hotkey → detection → lifecycle → ReShade
-/// activation, plus preset management and configuration. UI-agnostic except
-/// for the <see cref="Changed"/> notification (subscribers marshal to the UI
-/// thread). Core decision logic stays in the testable Core services.
+/// Application glue: DBD monitor → hotkey → detection → ReShade activation,
+/// plus preset management and configuration. UI-agnostic except for the
+/// <see cref="Changed"/> notification (subscribers marshal to the UI thread).
+/// Core decision logic stays in the testable Core services.
+/// <para>
+/// No match tracking: the app never tries to tell when gameplay starts or a
+/// match ends (1.2.1 removed that screen-change heuristic after it fired in
+/// the middle of a real match), and the screen is captured only while a scan
+/// runs. A switched preset stays until the next switch the user causes: a new
+/// scan (detection hotkey), the Global preset hotkey or "Switch to Global"
+/// (<see cref="ActivateGlobalNow"/>), a manual override or Return to
+/// Automatic, a Test, a scan that ends without a confident read, or DBD
+/// exiting (which, with <see cref="AppConfig.StartNextGameWithGlobal"/> on,
+/// makes Global ReShade's startup preset for the next launch).
+/// </para>
 /// <para>
 /// Activation: every preset switch (detected realm, manual override, Return
-/// to Automatic, Test buttons, match end, scan without a result) becomes the
-/// ONE desired activation target. A newer request supersedes the older one.
+/// to Automatic, Test buttons, Global preset hotkey, scan without a result)
+/// becomes the ONE desired activation target. A newer request supersedes the older one.
 /// It is sent as soon as DBD runs and is focused (immediately when possible,
 /// otherwise by a background worker every <c>activationRetryInterval</c>)
 /// until it succeeds, is superseded, fails for good, or its deadline passes.
@@ -61,13 +72,9 @@ namespace DBDAutoReShade.App.Services;
 /// </para>
 /// <para>
 /// Lock order (never acquire leftwards while holding something to the right):
-/// <c>_sendLock</c> | <c>_lifecycleCommandGate</c> → <c>_gate</c> → { MatchLifecycleService's
-/// internal lock, <c>_iniWriteLock</c> } (both leaf locks). <c>_sendLock</c> and
-/// <c>_lifecycleCommandGate</c> are never nested. Rules: nothing waits for
-/// <c>_sendLock</c> or <c>_lifecycleCommandGate</c> while holding <c>_gate</c>;
-/// no lifecycle command (it may capture the screen) runs under <c>_gate</c>,
-/// only non-capturing reads such as <see cref="MatchLifecycleService.Phase"/>;
-/// no screen capture or key send runs under <c>_gate</c>; every ReShade.ini
+/// <c>_sendLock</c> → <c>_gate</c> → <c>_iniWriteLock</c> (a leaf lock). Rules:
+/// nothing waits for <c>_sendLock</c> while holding <c>_gate</c>; no screen
+/// capture or key send runs under <c>_gate</c>; every ReShade.ini
 /// write (shortcut sync and reset cleanup under <c>_gate</c>, the startup-preset
 /// write at DBD exit without it) holds <c>_iniWriteLock</c>; the two global
 /// hotkeys (detection and Global preset) are registered and released
@@ -78,8 +85,6 @@ namespace DBDAutoReShade.App.Services;
 /// called while it is held) to queue the press, so its pump thread never waits
 /// for a switch; the config and the stored ReShade snapshot (a small file next to it) are
 /// saved, read and deleted under <c>_gate</c> (no other lock involved);
-/// <see cref="MatchLifecycleService.PhaseChanged"/> arrives with no lifecycle
-/// lock held, so its handlers may take any of the locks above;
 /// <see cref="MapDetected"/> is raised with no controller lock held.
 /// </para>
 /// <para>
@@ -89,9 +94,9 @@ namespace DBDAutoReShade.App.Services;
 /// (RegisterHotKey would swallow the app's own preset switches). Its press is
 /// queued off the hotkey's pump thread and runs <see cref="ActivateGlobalNow"/>
 /// on the thread pool, one press at a time, in order: a running scan stops
-/// without its own "no read → Global" request, the pending target, the manual
-/// override and the match tracking are dropped, and Global is requested through
-/// the same focus-aware pipeline as every other switch.
+/// without its own "no read → Global" request, the pending target and the
+/// manual override are dropped, and Global is requested through the same
+/// focus-aware pipeline as every other switch.
 /// </para>
 /// </summary>
 public sealed class AppController : IDisposable
@@ -104,9 +109,6 @@ public sealed class AppController : IDisposable
 
     /// <summary>How long a Test button waits for DBD focus.</summary>
     public static readonly TimeSpan TestFocusWindow = TimeSpan.FromSeconds(15);
-
-    /// <summary>How long the match-end Global restore waits for DBD focus.</summary>
-    public static readonly TimeSpan MatchEndFocusWindow = TimeSpan.FromMinutes(10);
 
     /// <summary>How long the Global switch after a scan without a confident read waits for DBD focus.</summary>
     public static readonly TimeSpan ScanWithoutResultFocusWindow = TimeSpan.FromMinutes(10);
@@ -124,7 +126,6 @@ public sealed class AppController : IDisposable
     private readonly IGlobalHotkeyService _globalHotkey;
     private readonly ISoundEffects _soundEffects;
     private readonly DetectionOrchestrator _detector;
-    private readonly MatchLifecycleService _lifecycle;
     private readonly PresetActivationService _activator;
     private readonly PresetDecisionService _decisions;
     private readonly ReshadeConfigurationService _reshadeConfig;
@@ -142,9 +143,6 @@ public sealed class AppController : IDisposable
 
     // Serializes every keystroke send (down/hold/up) from every source.
     private readonly SemaphoreSlim _sendLock = new(1, 1);
-
-    // Serializes lifecycle commands; see ApplyLifecycleCommand.
-    private readonly object _lifecycleCommandGate = new();
 
     // Serializes every ReShade.ini write (leaf lock; may be taken under _gate).
     private readonly object _iniWriteLock = new();
@@ -184,14 +182,6 @@ public sealed class AppController : IDisposable
     // The Tests' numbers, and how the newest Test that ended by itself ended (LastTestOutcome).
     private long _testSerial;
     private TestOutcome? _lastTestOutcome;
-
-    // Latest lifecycle decision; older commands that lost the race are skipped.
-    private long _lifecycleTicket;
-
-    // Ticket of the latest arm decision, and the newest ticket ApplyLifecycleCommand
-    // has finished with: an arm decision is pending while the first is larger.
-    private long _lastArmTicket;
-    private long _appliedLifecycleTicket;
     private int? _knownProcessId;
 
     private string? _overrideRealm;
@@ -244,7 +234,6 @@ public sealed class AppController : IDisposable
         IDbdMonitor dbd,
         IGlobalHotkeyService hotkey,
         DetectionOrchestrator detector,
-        MatchLifecycleService lifecycle,
         PresetActivationService activator,
         PresetDecisionService decisions,
         ReshadeConfigurationService reshadeConfig,
@@ -268,7 +257,6 @@ public sealed class AppController : IDisposable
         _globalHotkey = globalPresetHotkey ?? new UnregisteredHotkeyService();
         _soundEffects = soundEffects ?? NullSoundEffects.Instance;
         _detector = detector;
-        _lifecycle = lifecycle;
         _activator = activator;
         _decisions = decisions;
         _reshadeConfig = reshadeConfig;
@@ -586,7 +574,6 @@ public sealed class AppController : IDisposable
         _dbd.StatusChanged += (_, e) => OnDbdStatus(e);
         _hotkey.HotkeyPressed += (_, _) => _ = OnDetectionHotkeyAsync();
         _globalHotkey.HotkeyPressed += (_, _) => QueueGlobalHotkeyPress(); // returns at once; presses run in order
-        _lifecycle.PhaseChanged += (_, p) => OnLifecyclePhase(p);
         _detector.SampleEvaluated += (_, info) => OnSampleEvaluated(info);
 
         // The monitor's first poll runs inside Start, so afterwards IsRunning
@@ -631,19 +618,14 @@ public sealed class AppController : IDisposable
         }
 
         RegisterHotkey(appendToStatus: true); // both hotkeys; a problem must not hide the startup status
-
-        // Only frames of DBD itself count: while another window is in front the
-        // screen capture would show that window, so the lifecycle skips them.
-        _lifecycle.Start(() => _dbd.MainWindowHandle, () => _dbd.IsRunning, _activator.IsForeground);
         RaiseChanged();
     }
 
     /// <summary>
     /// Stops everything. Sends nothing from the moment it starts: every pending
-    /// request stops being current first, so neither the scan it stops (which
-    /// would otherwise request Global) nor a lifecycle handler sends keys as a
-    /// side effect of quitting. A send already in progress is let finish, so
-    /// no key stays pressed in the game.
+    /// request stops being current first, so the scan it stops (which would
+    /// otherwise request Global) sends no keys as a side effect of quitting. A
+    /// send already in progress is let finish, so no key stays pressed in the game.
     /// </summary>
     public void Shutdown()
     {
@@ -656,7 +638,6 @@ public sealed class AppController : IDisposable
         _dbd.Stop();
         _hotkey.Stop();
         _globalHotkey.Stop();
-        _lifecycle.Stop(); // no controller lock held: an in-flight handler can finish
         CancelScan();
 
         // Drain an in-flight down/hold/up sequence (bounded: exit never hangs).
@@ -791,7 +772,6 @@ public sealed class AppController : IDisposable
                 ct: scanToken).ConfigureAwait(false);
 
             ActivationRequest? request = null;
-            long armTicket = 0;
             MapDetectedEventArgs? detected = null;
             lock (_gate)
             {
@@ -811,7 +791,7 @@ public sealed class AppController : IDisposable
                 }
                 else if (result.Success && !string.IsNullOrWhiteSpace(result.RealmName))
                 {
-                    request = AcceptDetectionLocked(result, out armTicket);
+                    request = AcceptDetectionLocked(result);
                     detected = new MapDetectedEventArgs(result.RealmName!, result.MapName, result.Confidence);
                 }
                 else
@@ -825,12 +805,6 @@ public sealed class AppController : IDisposable
             if (detected is not null)
             {
                 RaiseMapDetected(detected); // first: the UI lands the skill check and plays the sound
-            }
-
-            if (armTicket != 0)
-            {
-                // Arm with the loading screen as reference (captures: outside every controller lock).
-                ApplyLifecycleCommand(armTicket, static l => l.ArmForTrial());
             }
 
             if (request is not null)
@@ -875,10 +849,13 @@ public sealed class AppController : IDisposable
         }
     }
 
-    /// <summary>A confident read: make its preset (or Global) the desired activation. Call with _gate held.</summary>
-    private ActivationRequest? AcceptDetectionLocked(DetectionResult result, out long armTicket)
+    /// <summary>
+    /// A confident read: make its preset (or Global) the desired activation. It
+    /// waits for DBD focus without a deadline and, once sent, stays active until
+    /// the user's next switch (nothing watches the match). Call with _gate held.
+    /// </summary>
+    private ActivationRequest? AcceptDetectionLocked(DetectionResult result)
     {
-        armTicket = 0;
         string realm = result.RealmName!;
         PresetDecision decision = _decisions.DecideForDetection(
             new MapMatchResult(true, result.MapName, realm, result.Confidence, MatchMethod.MapName),
@@ -907,7 +884,7 @@ public sealed class AppController : IDisposable
             successMessage: decision.IsGlobal
                 ? $"Active preset: {name} (Global — {realm} has no preset)."
                 : $"Active preset: {name} ({realm}).",
-            window: null, // no deadline while waiting for gameplay
+            window: null, // no deadline: it waits for DBD focus as long as it is the target
             deadlineMs: null);
 
         _states.TryTransitionTo(AppState.RealmIdentified);
@@ -915,8 +892,6 @@ public sealed class AppController : IDisposable
         _detectionText = $"Complete — {realm}";
         SetDesiredLocked(request);
         SetRequestStatusLocked(request, $"{context} Switching to {name}…");
-        armTicket = NextLifecycleTicketLocked();
-        _lastArmTicket = armTicket; // pending until ApplyLifecycleCommand finishes with it
         return request;
     }
 
@@ -1089,12 +1064,11 @@ public sealed class AppController : IDisposable
     private AttemptResult Attempt(ActivationRequest request)
     {
         AttemptResult result;
-        long? ensureArmTicket = null;
         PendingVerification? verification = null;
         _sendLock.Wait();
         try
         {
-            result = AttemptWhileSending(request, ref ensureArmTicket, ref verification);
+            result = AttemptWhileSending(request, ref verification);
         }
         catch (Exception ex)
         {
@@ -1103,12 +1077,6 @@ public sealed class AppController : IDisposable
         finally
         {
             _sendLock.Release();
-        }
-
-        if (ensureArmTicket is long ticket)
-        {
-            // A detected preset went out: keep the match tracked, but never force InTrial.
-            ApplyLifecycleCommand(ticket, static l => l.EnsureArmed());
         }
 
         if (verification is not null)
@@ -1124,8 +1092,7 @@ public sealed class AppController : IDisposable
         return result;
     }
 
-    private AttemptResult AttemptWhileSending(
-        ActivationRequest request, ref long? ensureArmTicket, ref PendingVerification? verification)
+    private AttemptResult AttemptWhileSending(ActivationRequest request, ref PendingVerification? verification)
     {
         ReshadeShortcutConfig? shortcut;
         string? iniPath;
@@ -1136,13 +1103,6 @@ public sealed class AppController : IDisposable
             if (!IsCurrentLocked(request))
             {
                 return new AttemptResult(AttemptOutcome.Superseded, null, Quiet: true);
-            }
-
-            if (request.Exhausted)
-            {
-                string message = ExhaustedMessage(request);
-                SetRequestStatusLocked(request, message);
-                return new AttemptResult(AttemptOutcome.Failed, message);
             }
 
             if (request.DeadlineMs is long deadline && _clockMs() >= deadline)
@@ -1213,13 +1173,7 @@ public sealed class AppController : IDisposable
             _desired = null;
             if (request.Origin == ActivationOrigin.Detected)
             {
-                _states.TryTransitionTo(AppState.PresetActive);
-
-                // The CURRENT decision's ticket, not a new one: the conditional
-                // EnsureArmed must never supersede the detection's pending
-                // ArmForTrial (which may not have run yet), but still yields to
-                // any newer decision (disarm, a new detection).
-                ensureArmTicket = _lifecycleTicket;
+                _states.TryTransitionTo(AppState.PresetActive); // until the user's next switch
             }
 
             if (IsSamePreset(before, request.PresetPath))
@@ -1283,27 +1237,23 @@ public sealed class AppController : IDisposable
                         $"{_maxActivationAttempts}); retrying… {failure.Message}"));
                     return new AttemptResult(AttemptOutcome.Waiting, null);
                 }
-
-                if (request.Origin == ActivationOrigin.Detected)
-                {
-                    // Stays the target (the detection hotkey or gameplay starting renews the budget), but stops sending.
-                    request.Exhausted = true;
-                    string exhausted = ExhaustedMessage(request);
-                    SetRequestStatusLocked(request, exhausted);
-                    return new AttemptResult(AttemptOutcome.Failed, exhausted);
-                }
             }
 
-            // Final failure for this request.
+            // Final failure for this request, a spent send budget included: nothing
+            // retries it by itself (no gameplay detection renews it), so a detected
+            // preset stops being the pending target and the app is Ready again.
             _desired = null;
             if (request.Origin == ActivationOrigin.Detected && _states.State == AppState.WaitingForGameplay)
             {
                 _states.TryTransitionTo(AppState.Ready);
             }
 
-            string message = request.Origin == ActivationOrigin.Test
-                ? $"Test failed: {failure.Message}"
-                : Prefixed(request.Context, $"Could not switch to {request.Name}: {failure.Message}");
+            string message = request.Origin switch
+            {
+                ActivationOrigin.Test => $"Test failed: {failure.Message}",
+                ActivationOrigin.Detected when failure.Failure == ActivationFailure.SendBlocked => SendBudgetSpentMessage(request),
+                _ => Prefixed(request.Context, $"Could not switch to {request.Name}: {failure.Message}"),
+            };
             SetRequestStatusLocked(request, message);
             return new AttemptResult(AttemptOutcome.Failed,
                 request.Origin == ActivationOrigin.Test ? failure.Message : message);
@@ -1314,8 +1264,15 @@ public sealed class AppController : IDisposable
         ? $"Click into Dead by Daylight within {FormatWindow(TestFocusWindow)} to test {request.Name}…"
         : Prefixed(request.Context, $"Waiting for DBD focus to switch to {request.Name} — click into the game.");
 
-    private string ExhaustedMessage(ActivationRequest request) =>
-        $"Could not switch to {request.Name}: {request.LastSendError} Press {Config.DetectionHotkey} to retry.";
+    /// <summary>
+    /// A detected preset whose rejected sends used up the budget. A new scan can
+    /// only read a loading screen (in a match it would end without a read and
+    /// switch to Global), so the hint says when to press it, and names the
+    /// manual override as the way to force the preset during a match.
+    /// </summary>
+    private string SendBudgetSpentMessage(ActivationRequest request) =>
+        $"Could not switch to {request.Name}: {request.LastSendError} Press {Config.DetectionHotkey} on a loading " +
+        "screen to try again, or use the manual override.";
 
     private static string ExpiredMessage(ActivationRequest request) => request.Origin == ActivationOrigin.Test
         ? $"Test of {request.Name} cancelled — Dead by Daylight wasn't focused within {FormatWindow(request.Window)}."
@@ -1382,9 +1339,11 @@ public sealed class AppController : IDisposable
     /// <summary>
     /// Sends <paramref name="request"/> as soon as DBD runs and is focused,
     /// checking every <see cref="_retryInterval"/>, until it succeeds, is
-    /// superseded, fails for good, is exhausted or its deadline passes. The
-    /// exit decision and <c>WorkerRunning = false</c> happen atomically under
-    /// _gate, so a budget renewal can always restart it.
+    /// superseded, fails for good (a spent send budget included) or its
+    /// deadline passes. The exit decision and <c>WorkerRunning = false</c>
+    /// happen together under _gate, so the flag is set exactly while a worker
+    /// can still send for the request and <see cref="StartWorkerLocked"/> never
+    /// starts a second one.
     /// </summary>
     private async Task RunActivationWorkerAsync(ActivationRequest request, CancellationToken token)
     {
@@ -1406,7 +1365,7 @@ public sealed class AppController : IDisposable
 
             lock (_gate)
             {
-                if (!IsCurrentLocked(request) || request.Exhausted)
+                if (!IsCurrentLocked(request))
                 {
                     request.WorkerRunning = false;
                     return;
@@ -1495,187 +1454,7 @@ public sealed class AppController : IDisposable
     private bool IsConfirmedActiveLocked(string? presetPath) =>
         _activePresetConfirmed && IsSamePreset(_activePresetPath, presetPath);
 
-    // ---------- Lifecycle ----------
-
-    private long NextLifecycleTicketLocked() => ++_lifecycleTicket;
-
-    /// <summary>
-    /// Runs a lifecycle command decided under _gate (ticket from
-    /// <see cref="NextLifecycleTicketLocked"/>) after _gate was released. Commands
-    /// may capture the screen, so they never run under _gate; they are
-    /// serialized, and a command whose decision was overtaken by a newer one
-    /// is skipped (the newest decision always wins). Never call with _gate held.
-    /// </summary>
-    private void ApplyLifecycleCommand(long ticket, Action<MatchLifecycleService> command)
-    {
-        lock (_lifecycleCommandGate)
-        {
-            bool current;
-            lock (_gate)
-            {
-                current = ticket == _lifecycleTicket;
-            }
-
-            try
-            {
-                if (current)
-                {
-                    command(_lifecycle);
-                }
-            }
-            catch
-            {
-                // The lifecycle is best-effort.
-            }
-            finally
-            {
-                lock (_gate)
-                {
-                    // Done with this decision (applied or skipped as stale).
-                    _appliedLifecycleTicket = Math.Max(_appliedLifecycleTicket, ticket);
-                }
-            }
-        }
-    }
-
-    /// <summary>Raised by the lifecycle with no lifecycle lock held; may take any controller lock.</summary>
-    private void OnLifecyclePhase(LifecyclePhase phase)
-    {
-        switch (phase)
-        {
-            case LifecyclePhase.InTrial:
-                OnTrialObserved();
-                break;
-            case LifecyclePhase.BackToMenus:
-                ReturnToGlobalAfterMatch();
-                break;
-            default:
-                RaiseChanged();
-                break;
-        }
-    }
-
-    /// <summary>Gameplay started: a still-pending detected preset gets a fresh attempt budget and an immediate try.</summary>
-    private void OnTrialObserved()
-    {
-        ActivationRequest? retry = null;
-        lock (_gate)
-        {
-            if (!_disposed && _desired is { Origin: ActivationOrigin.Detected } pending &&
-                _states.State == AppState.WaitingForGameplay)
-            {
-                pending.SendFailures = 0;
-                pending.Exhausted = false;
-                StartWorkerLocked(pending);
-                retry = pending;
-            }
-        }
-
-        if (retry is not null)
-        {
-            Attempt(retry);
-        }
-        else
-        {
-            RaiseChanged();
-        }
-    }
-
-    /// <summary>
-    /// The lifecycle saw the return to menus. Decides and transitions under
-    /// _gate, then always disarms, then (when restoring) requests Global.
-    /// An observation that a newer arm decision overtook is ignored.
-    /// </summary>
-    private void ReturnToGlobalAfterMatch()
-    {
-        ActivationRequest? restore = null;
-        long disarmTicket;
-        lock (_gate)
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            // The handler runs after the monitor's own staleness check, so a
-            // "back to menus" of the PREVIOUS match can still arrive after a new
-            // detection was accepted: its arm decision is still being applied,
-            // or it already re-armed the monitor (phase no longer BackToMenus).
-            // Acting on it would drop the fresh target and disarm the new match.
-            // Reading Phase here is a non-capturing leaf call (allowed order).
-            if (_lastArmTicket > _appliedLifecycleTicket || _lifecycle.Phase != LifecyclePhase.BackToMenus)
-            {
-                return;
-            }
-
-            disarmTicket = NextLifecycleTicketLocked();
-            bool autoRestore = Config.AutoRestoreGlobalOnMenu;
-            string? global = Config.GlobalPresetPath;
-            bool hasGlobal = !string.IsNullOrWhiteSpace(global);
-            switch (_states.State)
-            {
-                case AppState.WaitingForGameplay:
-                    // The detected preset never went out this match: drop it.
-                    ClearDesiredLocked();
-                    _states.TryTransitionTo(AppState.Ready);
-                    SetReadyTextLocked();
-                    SetStatusLocked("Match ended.");
-                    if (autoRestore && hasGlobal && !IsConfirmedActiveLocked(global))
-                    {
-                        restore = MatchEndRequestLocked(global!);
-                    }
-
-                    break;
-
-                case AppState.PresetActive or AppState.ManualOverride when autoRestore:
-                    ClearDesiredLocked();
-                    _overrideRealm = null;
-                    _states.TryTransitionTo(AppState.ReturningToMenu);
-                    _states.TryTransitionTo(AppState.Ready);
-                    SetReadyTextLocked();
-                    SetStatusLocked("Match ended. No Global preset is configured.");
-                    if (hasGlobal)
-                    {
-                        restore = MatchEndRequestLocked(global!);
-                    }
-
-                    break;
-
-                default:
-                    // Auto-restore off, a scan running (left alone), or nothing
-                    // tracked: only stop tracking the match.
-                    break;
-            }
-        }
-
-        ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
-        if (restore is not null)
-        {
-            Attempt(restore);
-        }
-        else
-        {
-            RaiseChanged();
-        }
-    }
-
-    private ActivationRequest MatchEndRequestLocked(string global)
-    {
-        string name = Path.GetFileName(global);
-        var request = new ActivationRequest(
-            ActivationOrigin.MatchEnd,
-            global,
-            AppConfigKeys.GlobalShortcutKey,
-            realm: null,
-            what: "Match end → Global",
-            context: "Match ended.",
-            successMessage: "Match ended — Global preset restored.",
-            window: MatchEndFocusWindow,
-            deadlineMs: DeadlineAfter(MatchEndFocusWindow));
-        SetDesiredLocked(request);
-        SetRequestStatusLocked(request, $"Match ended — switching to the Global preset ({name})…");
-        return request;
-    }
+    // ---------- DBD running / exited ----------
 
     private void OnDbdStatus(DbdStatusEventArgs e)
     {
@@ -1686,7 +1465,6 @@ public sealed class AppController : IDisposable
         }
 
         CancellationTokenSource? scanToStop = null;
-        long disarmTicket = 0;
         lock (_gate)
         {
             if (_disposed || !_initialized)
@@ -1703,19 +1481,18 @@ public sealed class AppController : IDisposable
             }
 
             // Otherwise this is a window-handle-only change of the same process:
-            // scans, the lifecycle and activations read the live handle, and
+            // scans and activations read the live handle, and
             // status, discovery and shortcut-restart state stay as they are.
             if (wasDown || pidChanged)
             {
                 if (!wasDown)
                 {
-                    // DBD restarted between polls: the old process (and its match) is gone.
+                    // DBD restarted between polls: the old process is gone.
                     scanToStop = _scanCts;
                     _scanCts = null;
                     ClearDesiredLocked();
                     _overrideRealm = null;
                     _states.TryTransitionTo(AppState.WaitingForDbd);
-                    disarmTicket = NextLifecycleTicketLocked();
                 }
 
                 _states.TryTransitionTo(AppState.Ready);
@@ -1730,18 +1507,15 @@ public sealed class AppController : IDisposable
         }
 
         CancelQuietly(scanToStop);
-        if (disarmTicket != 0)
-        {
-            ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
-        }
-
         RaiseChanged();
     }
 
     /// <summary>
-    /// DBD exited: stop everything, and (auto-restore on) make Global
-    /// ReShade's startup preset so the next launch doesn't start with the
-    /// last realm's preset. The process is gone, so ReShade can't overwrite it.
+    /// DBD exited: stop everything (a manual override ends too), and (with
+    /// <see cref="AppConfig.StartNextGameWithGlobal"/> on, "Start the next game
+    /// with the Global preset") make Global ReShade's startup preset so the next
+    /// launch doesn't start with the last realm's preset. That setting gates
+    /// only this write. The process is gone, so ReShade can't overwrite it.
     /// What ReShade.ini says decides, not what the app last sent: Global keys
     /// that ReShade ignored leave the realm preset there. Only after ReShade
     /// confirmed the app's switch to Global is a different preset in
@@ -1751,7 +1525,6 @@ public sealed class AppController : IDisposable
     private void OnDbdExited()
     {
         CancellationTokenSource? scanToStop;
-        long disarmTicket;
         string? iniPath = null;
         string? global = null;
         bool globalConfirmed = false;
@@ -1773,9 +1546,8 @@ public sealed class AppController : IDisposable
             _states.TryTransitionTo(AppState.WaitingForDbd);
             _detectionText = "Waiting for DBD…";
             SetStatusLocked("Launch Dead by Daylight.");
-            disarmTicket = NextLifecycleTicketLocked();
 
-            if (Config.AutoRestoreGlobalOnMenu &&
+            if (Config.StartNextGameWithGlobal &&
                 !string.IsNullOrWhiteSpace(Config.GlobalPresetPath) &&
                 !string.IsNullOrWhiteSpace(Config.ReshadeIniPath))
             {
@@ -1786,7 +1558,6 @@ public sealed class AppController : IDisposable
         }
 
         CancelQuietly(scanToStop);
-        ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
 
         if (iniPath is not null && global is not null && File.Exists(iniPath))
         {
@@ -1852,6 +1623,12 @@ public sealed class AppController : IDisposable
 
     // ---------- Manual override ----------
 
+    /// <summary>
+    /// Forces <paramref name="realm"/>'s preset (Global when it has none) until
+    /// the user ends the override: Return to Automatic, a new scan (detection
+    /// hotkey), the Global preset hotkey or "Switch to Global", or DBD exiting.
+    /// Nothing else clears it (the app does not watch the match).
+    /// </summary>
     public void ApplyManualOverride(string? realm)
     {
         ActivationRequest? request = null;
@@ -2006,9 +1783,8 @@ public sealed class AppController : IDisposable
     /// default: the texts then say the Global preset was requested, not that a
     /// key was pressed). With DBD running and a Global preset set: a running scan
     /// is cancelled without its own "scan ended without a read → Global" request
-    /// (it would double up), the pending target, the manual override and the
-    /// match tracking are dropped (the lifecycle is disarmed, so no match-end
-    /// restore follows), the state becomes <see cref="AppState.Ready"/>, and
+    /// (it would double up), the pending target and the manual override are
+    /// dropped, the state becomes <see cref="AppState.Ready"/>, and
     /// Global is requested through the focus-aware pipeline (sent at once while
     /// DBD is focused, the usual case for a hotkey pressed in game; otherwise
     /// within <see cref="GlobalHotkeyFocusWindow"/>). Status: "Switched to the
@@ -2022,7 +1798,6 @@ public sealed class AppController : IDisposable
     public void ActivateGlobalNow(bool fromHotkey = false)
     {
         CancellationTokenSource? scanToStop = null;
-        long disarmTicket = 0;
         ActivationRequest? request = null;
         lock (_gate)
         {
@@ -2050,10 +1825,9 @@ public sealed class AppController : IDisposable
                 _scanCts = null;
                 _scanPauseNotice = null;
 
-                // (2) Nothing pending, no override, the match no longer tracked.
+                // (2) Nothing pending, no override.
                 ClearDesiredLocked();
                 _overrideRealm = null;
-                disarmTicket = NextLifecycleTicketLocked();
 
                 // (4) Every state with DBD running may go to Ready.
                 _states.TryTransitionTo(AppState.Ready);
@@ -2080,11 +1854,6 @@ public sealed class AppController : IDisposable
         }
 
         CancelQuietly(scanToStop);
-        if (disarmTicket != 0)
-        {
-            ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
-        }
-
         if (request is not null)
         {
             Attempt(request); // immediate try: DBD is usually focused when the hotkey is pressed
@@ -2557,11 +2326,21 @@ public sealed class AppController : IDisposable
         RaiseChanged();
     }
 
-    public void SetAutoRestore(bool enabled)
+    /// <summary>
+    /// "Start the next game with the Global preset" (<see cref="AppConfig.StartNextGameWithGlobal"/>):
+    /// whether DBD exiting makes the Global preset ReShade's startup preset. Saved (a save failure is
+    /// shown on the status line). It changes nothing while DBD runs.
+    /// </summary>
+    public void SetStartNextGameWithGlobal(bool enabled)
     {
         lock (_gate)
         {
-            Config.AutoRestoreGlobalOnMenu = enabled;
+            if (Config.StartNextGameWithGlobal == enabled)
+            {
+                return;
+            }
+
+            Config.StartNextGameWithGlobal = enabled;
             SaveOrReportLocked();
         }
 
@@ -2755,12 +2534,11 @@ public sealed class AppController : IDisposable
     /// (best effort, the user's own shortcuts stay), resets the config,
     /// re-runs discovery, registers both default hotkeys (detection F8, Global
     /// preset F9) and resets the runtime
-    /// state (no scan, no pending switch, match not tracked).
+    /// state (no scan, no pending switch, no override).
     /// </summary>
     public void ResetSettings()
     {
         CancellationTokenSource? scanToStop;
-        long disarmTicket;
         lock (_gate)
         {
             if (_disposed)
@@ -2782,8 +2560,8 @@ public sealed class AppController : IDisposable
                 resetError = $"Could not save settings: {ex.Message}";
             }
 
-            // (5) Runtime state: nothing scanning or pending, the match no longer
-            // tracked, and the active preset unknown again.
+            // (5) Runtime state: nothing scanning or pending, no override, and
+            // the active preset unknown again.
             scanToStop = _scanCts;
             _scanCts = null;
             ClearDesiredLocked();
@@ -2793,7 +2571,6 @@ public sealed class AppController : IDisposable
             _activeRealm = null;
             _activePresetConfirmed = false;
             _activeSwitch++; // a read-back still running confirms nothing now
-            disarmTicket = NextLifecycleTicketLocked();
             _states.TryTransitionTo(_dbd.IsRunning ? AppState.Ready : AppState.WaitingForDbd);
             SetReadyTextLocked();
 
@@ -2804,7 +2581,6 @@ public sealed class AppController : IDisposable
         }
 
         CancelQuietly(scanToStop);
-        ApplyLifecycleCommand(disarmTicket, static l => l.Disarm());
 
         // (4) The default hotkeys (re-registering the same combo is safe). A
         // registration problem is added to the reset status, never replaces it.
@@ -3615,7 +3391,7 @@ public sealed class AppController : IDisposable
             DebugMode = c.DebugMode,
             DatabaseVersion = c.DatabaseVersion,
             DatabaseUpdateManifestUrl = c.DatabaseUpdateManifestUrl,
-            AutoRestoreGlobalOnMenu = c.AutoRestoreGlobalOnMenu,
+            StartNextGameWithGlobal = c.StartNextGameWithGlobal,
             GlobalHotkey = c.GlobalHotkey,
             AnimationsEnabled = c.AnimationsEnabled,
             SoundEnabled = c.SoundEnabled,
@@ -3719,7 +3495,6 @@ public sealed class AppController : IDisposable
         ManualOverride,
         ReturnToAutomatic,
         Test,
-        MatchEnd,
         ScanWithoutResult,
 
         /// <summary>The Global preset hotkey (<see cref="ActivateGlobalNow"/> from a press).</summary>
@@ -3737,7 +3512,7 @@ public sealed class AppController : IDisposable
         /// <summary>Still the target: waiting for DBD focus, or retrying a rejected send.</summary>
         Waiting,
 
-        /// <summary>Final failure (or exhausted / expired); the status says why.</summary>
+        /// <summary>Final failure (a spent send budget or a passed deadline included); the status says why.</summary>
         Failed,
 
         /// <summary>A newer request (or a cleared target) replaced this one.</summary>
@@ -3821,8 +3596,6 @@ public sealed class AppController : IDisposable
 
         /// <summary>A Test's number (<see cref="PendingTest.Serial"/>); 0 for other requests.</summary>
         public long Serial { get; init; }
-
-        public bool Exhausted { get; set; }
 
         public bool WorkerRunning { get; set; }
     }

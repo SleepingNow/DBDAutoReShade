@@ -70,7 +70,7 @@ public sealed partial class ControllerActivationTests
         Assert.StartsWith("Could not save settings", vm.DatabaseProblem);
 
         RepairConfigSaving(h);
-        vm.AutoRestore = false; // saved again: the problem is gone
+        vm.StartNextGameWithGlobal = false; // saved again: the problem is gone
         Assert.Null(vm.BehaviourProblem);
     }
 
@@ -297,11 +297,66 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public void OverrideHelp_QuotesTheSettingsCheckbox()
+    public void OverrideHelp_NamesEveryWayItEnds_AndNoMatchEnd()
     {
-        var (_, vm, _) = ViewModel();
-        Assert.Contains("\"" + MainViewModel.AutoRestoreLabel + "\"", vm.OverrideHelpText);
-        Assert.Equal("Restore the Global preset when a match ends", MainViewModel.AutoRestoreLabel);
+        var (h, vm, _) = ViewModel(new ControllerHarnessOptions { Configure = c => c.DetectionHotkey = Combo("F20") });
+        string help = vm.OverrideHelpText;
+        Assert.StartsWith("An override stays until Return to automatic, a new scan (Ctrl+Alt+F20), the Global preset hotkey (F9) or DBD exit.", help);
+        Assert.DoesNotContain("match", help, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Restore the Global preset", help);
+
+        // The Global preset hotkey changed or cleared: the help follows it.
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        Assert.Null(h.Controller.UpdateGlobalHotkey(new DetectionHotkeyConfig { Key = "F10" }));
+        vm.Refresh();
+        Assert.Contains("the Global preset hotkey (F10)", vm.OverrideHelpText);
+        Assert.Contains(nameof(MainViewModel.OverrideHelpText), raised);
+        h.Controller.ClearGlobalHotkey();
+        vm.Refresh();
+        Assert.Contains("a new scan (Ctrl+Alt+F20), \"Switch to Global\" or DBD exit.", vm.OverrideHelpText);
+    }
+
+    [Fact]
+    public void OverrideHelp_NeverNamesAGlobalHotkeyThatDoesNothing()
+    {
+        // F9 is set but another program holds it: pressing it does nothing in this app (the rail dims it), so the
+        // help names the override bar's button instead.
+        var f9 = new DetectionHotkeyConfig { Key = "F9" };
+        var (h, vm, _) = ViewModel(new ControllerHarnessOptions
+        {
+            Configure = c => c.DetectionHotkey = Combo("F20"),
+            HotkeysHeldElsewhere = new[] { f9 },
+        });
+        Assert.True(vm.HasGlobalHotkey);
+        Assert.True(vm.GlobalHotkeyUnavailable);
+        Assert.Contains("a new scan (Ctrl+Alt+F20), \"Switch to Global\" or DBD exit.", vm.OverrideHelpText);
+        Assert.DoesNotContain("F9", vm.OverrideHelpText);
+
+        // The other program lets F9 go and it registers again: the help names it, and says so to the bindings.
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        h.GlobalPresetHotkey.ReleaseElsewhere(f9);
+        vm.BeginGlobalHotkeyCapture();
+        vm.CancelHotkeyCapture();
+        Assert.False(vm.GlobalHotkeyUnavailable);
+        Assert.Contains("a new scan (Ctrl+Alt+F20), the Global preset hotkey (F9) or DBD exit.", vm.OverrideHelpText);
+        Assert.Contains(nameof(MainViewModel.OverrideHelpText), raised);
+    }
+
+    [Fact]
+    public void Settings_StartNextGameWithGlobal_IsTheOldKeysCheckbox_WithItsNewMeaning()
+    {
+        Assert.Equal("Start the next game with the Global preset", MainViewModel.StartWithGlobalLabel);
+        Assert.Equal("When Dead by Daylight closes, the app sets your Global preset as ReShade's startup preset.", MainViewModel.StartWithGlobalHint);
+
+        var (h, vm, _) = ViewModel(new ControllerHarnessOptions { Configure = c => c.StartNextGameWithGlobal = false });
+        Assert.False(vm.StartNextGameWithGlobal); // an existing config's choice shows as it is
+
+        vm.StartNextGameWithGlobal = true;
+        Assert.True(h.Controller.Config.StartNextGameWithGlobal);
+        Assert.Contains("\"autoRestoreGlobalOnMenu\": true", File.ReadAllText(h.ConfigPath)); // saved under its old key
+        Assert.Null(vm.BehaviourProblem);
     }
 
     [Fact]

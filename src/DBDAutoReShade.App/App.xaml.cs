@@ -31,7 +31,6 @@ public partial class App : Application
     private IGlobalHotkeyService? _globalPresetHotkey;
     private SoundEffectsService? _sounds;
     private DetectionOrchestrator? _detector;
-    private MatchLifecycleService? _lifecycle;
     private AppConfigService? _configService;
     private RealmDatabaseService? _database;
 
@@ -103,11 +102,10 @@ public partial class App : Application
         _globalPresetHotkey = new GlobalHotkeyService(); // the second registration: "Switch to Global preset"
         _sounds = new SoundEffectsService(OpenGreatSound);
         _sounds.Preload(); // parse the sound now, not when the first map is found
-        var capture = new GdiWindowCaptureService();
+        var capture = new GdiWindowCaptureService(); // only the scan captures (the OCR regions)
         var ocr = new WindowsOcrEngine();
         var matcher = new MapMatchingService();
         _detector = new DetectionOrchestrator(ocr, matcher, _database, capture);
-        _lifecycle = new MatchLifecycleService(capture);
         var activator = new PresetActivationService(new SendInputKeySimulator());
         var decisions = new PresetDecisionService();
         var reshadeConfig = new ReshadeConfigurationService();
@@ -117,7 +115,7 @@ public partial class App : Application
         // (temp) paths and must not touch the real ReShade.ini.
         bool devDataDir = AppConfigService.DataDirOverride() is not null;
         _controller = new AppController(_configService, _database, states, _dbd, _hotkey,
-            _detector, _lifecycle, activator, decisions, reshadeConfig,
+            _detector, activator, decisions, reshadeConfig,
             discoverDbdExePath: devDataDir ? static () => null : null,
             discoverReshadeIniPath: devDataDir ? static _ => null : null,
             globalPresetHotkey: _globalPresetHotkey, soundEffects: _sounds);
@@ -167,7 +165,6 @@ public partial class App : Application
         try
         {
             _controller?.Shutdown();
-            _lifecycle?.Dispose();
             _detector?.Dispose();
             _hotkey?.Dispose();
             _globalPresetHotkey?.Dispose();

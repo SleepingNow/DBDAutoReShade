@@ -12,7 +12,7 @@ namespace DBDAutoReShade.Tests.Campfire;
 /// <summary>
 /// Opt-in window-level snapshots (set <c>DBD_SNAPSHOTS=&lt;dir&gt;</c>): the REAL main window over the real controller
 /// (<see cref="WindowScene"/>) in each of the prototype's states (waiting, ready, scanning, waitingFocus, active,
-/// paused, matchEnded, restartNeeded), on each tab, at the design size (1280 x 800) and the minimum (1024 x 680),
+/// paused, restartNeeded), on each tab, at the design size (1280 x 800) and the minimum (1024 x 680),
 /// rendered off screen with RenderTargetBitmap (the window is never activated and sits far off screen), plus the
 /// setup wizard. Moments are settled (frozen at their end); the scan's skill check is put 2.4 s into its spin.
 /// Compare with the prototype's reference renders. Never runs in a normal test pass.
@@ -131,8 +131,8 @@ public sealed class MainWindowSnapshotTests : IDisposable
     /// <summary>
     /// The real window telling a match: the map found while scanning in front (real time, frames at about the given
     /// times: the skill check lands, the Great, the dial lifts, the fog clears off the map), then the preset confirmed
-    /// (the ember runs round the frame) and the match end (the map sinks, the legs yank up), each frozen at the given
-    /// times from the change.
+    /// (the ember runs round the frame) and, back in the menus, F9 to the Global preset (the map sinks, the clearing
+    /// returns), each frozen at the given times from the change.
     /// </summary>
     [SnapshotFact]
     public void MainWindow_MatchStory_Frames() => CampfireTestHost.RunSta(() =>
@@ -151,16 +151,9 @@ public sealed class MainWindowSnapshotTests : IDisposable
             Assert.True(scene.Harness.Controller.RetryPendingActivation());
             FrozenFrames(scene, "confirm", 0, 200, 450, 700, 950, 1400);
 
-            scene.Harness.Lifecycle.PollOnce(); // the loading screen (armed while DBD was not in front: this frame is the reference)
-            scene.Harness.Capture.Level = 200; // gameplay
-            for (int i = 0; i < 12 && scene.Harness.Lifecycle.Phase != DBDAutoReShade.Desktop.Services.LifecyclePhase.InTrial; i++)
-            {
-                scene.Harness.Lifecycle.PollOnce();
-                CampfireTestHost.Wait(TimeSpan.FromMilliseconds(20));
-            }
-
-            scene.Harness.DriveToMenus(); // the match ends: Global is restored
-            FrozenFrames(scene, "matchend", 0, 250, 500, 750, 1100, 2100);
+            _ = Task.Run(() => scene.Harness.GlobalPresetHotkey.Press()); // F9 back in the menus (handled off the UI thread, as in the app)
+            WindowScene.PumpUntil(() => scene.Window.PresentedScreen?.State == ScreenState.Ready, "back to Global");
+            FrozenFrames(scene, "global", 0, 250, 500, 750, 1100, 2100);
         }
         finally
         {

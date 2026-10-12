@@ -188,11 +188,10 @@ public sealed partial class MainViewModel
             AppState.RealmIdentified or AppState.WaitingForGameplay => ScreenState.WaitingFocus,
             AppState.PresetActive => ScreenState.Active,
             AppState.ManualOverride => ScreenState.Override,
-            AppState.ReturningToMenu => ScreenState.MatchEnded,
             AppState.Error => ScreenState.Error,
-            _ => status.StartsWith("Match ended", StringComparison.Ordinal) ? ScreenState.MatchEnded : ScreenState.Ready,
+            _ => ScreenState.Ready,
         };
-        if (!running && screen is ScreenState.Ready or ScreenState.MatchEnded)
+        if (!running && screen == ScreenState.Ready)
         {
             screen = ScreenState.Waiting;
         }
@@ -204,7 +203,6 @@ public sealed partial class MainViewModel
             ScreenState.Paused => "Scan paused",
             ScreenState.WaitingFocus => "Map found — waiting for you to click into the game",
             ScreenState.Active => "Preset active",
-            ScreenState.MatchEnded => "Match ended",
             ScreenState.Override => "Manual override",
             ScreenState.Error => "Something went wrong",
             _ => "Ready",
@@ -254,11 +252,9 @@ public sealed partial class MainViewModel
             lastText = " " + (full.StartsWith(lastTime, StringComparison.Ordinal) ? full[lastTime.Length..].TrimStart() : full);
         }
 
-        // the plate: the map when one is known, else the campfire clearing (a match that ended always shows the
-        // clearing: the controller resets the detection line an instant after it reports the end, and a refresh in
-        // between must not bring the map back for a moment)
+        // the plate: the map when one is known, else the campfire clearing
         bool detectionShown = detected is { Success: true } && !string.IsNullOrWhiteSpace(detected.RealmName) &&
-            detection.StartsWith("Complete", StringComparison.Ordinal) && screen != ScreenState.MatchEnded &&
+            detection.StartsWith("Complete", StringComparison.Ordinal) &&
             state is AppState.Ready or AppState.RealmIdentified or AppState.WaitingForGameplay or AppState.PresetActive;
         PlateScene plate;
         PlateTone tone = PlateTone.Neutral;
@@ -310,13 +306,6 @@ public sealed partial class MainViewModel
         {
             plate = PlateScene.Lobby(FireState.Embers, "Scan paused", "Switch back to Dead by Daylight to resume.");
             tag = PlateTag.WaitingForFocus;
-        }
-        else if (screen == ScreenState.MatchEnded)
-        {
-            string lastMatch = detected?.RealmName ?? c.ActiveRealm ?? "unknown";
-            plate = PlateScene.Lobby(FireState.Burning,
-                status.Contains("Global preset restored", StringComparison.Ordinal) ? "Global preset restored" : "Match ended",
-                $"Last match: {lastMatch}. Press {hotkey} on the next loading screen.");
         }
         else if (screen == ScreenState.Error)
         {

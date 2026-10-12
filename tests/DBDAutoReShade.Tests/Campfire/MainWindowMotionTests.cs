@@ -95,33 +95,28 @@ public sealed class MainWindowMotionTests : IDisposable
                 scene.Settle();
                 var births = RecordBirths(scene);
 
-                // active -> match ended (the lifecycle polls off the UI thread, as in the app): the picture sinks into the
-                // fog, the Entity yanks the realm away
-                _ = Task.Run(() =>
-                {
-                    scene.Harness.DriveToTrial();
-                    scene.Harness.DriveToMenus();
-                });
-                WindowScene.PumpUntil(() => births.Any(b => b.Name == "Active → MatchEnded"), "the match end");
-                StateMoment matchEnd = births.First(b => b.Name == "Active → MatchEnded").Moment;
-                Assert.True(matchEnd.MomentNames.Contains("EntityLegs.retract") && matchEnd.MomentNames.Contains("MapPlate.Sink"), string.Join(" | ", births.Select(b => b.Name + ": " + string.Join(", ", b.Parts))));
+                // active -> Global (F9, handled off the UI thread, as in the app): the picture sinks into the fog
+                _ = Task.Run(() => scene.Harness.GlobalPresetHotkey.Press());
+                WindowScene.PumpUntil(() => births.Any(b => b.Name == "Active → Ready"), "the switch to Global");
+                StateMoment toGlobal = births.First(b => b.Name == "Active → Ready").Moment;
+                Assert.True(toGlobal.MomentNames.Contains("MapPlate.Sink"), string.Join(" | ", births.Select(b => b.Name + ": " + string.Join(", ", b.Parts))));
                 MapPlate plate = Status(scene).MapPlate;
                 Assert.Equal(1, Count<MapPicture>(plate)); // the sinking picture, a ghost over the clearing
 
-                // F8 at once: the scan's moment takes over; the sink and the yank ease back to rest instead of jumping
+                // F8 at once: the scan's moment takes over; the sink eases back to rest instead of jumping
                 CampfireTestHost.Wait(TimeSpan.FromMilliseconds(120));
                 scene.Harness.Ocr.Text = string.Empty; // (a loading screen that is still being read)
                 _ = Task.Run(() => scene.Harness.Controller.TriggerDetectionAsync());
-                WindowScene.PumpUntil(() => scene.Window.CurrentMoment is { } m && !ReferenceEquals(m, matchEnd) && m.Name.EndsWith("Scanning", StringComparison.Ordinal), "the scan");
-                Assert.True(matchEnd.WasInterrupted);
-                Assert.Contains(matchEnd.Moments, m => m.IsSettling); // easing back, not snapping
-                Assert.DoesNotContain(MotionDiagnostics.ActiveMoments, n => n is "EntityLegs.retract" or "MapPlate.Sink"); // their own clocks are gone
+                WindowScene.PumpUntil(() => scene.Window.CurrentMoment is { } m && !ReferenceEquals(m, toGlobal) && m.Name.EndsWith("Scanning", StringComparison.Ordinal), "the scan");
+                Assert.True(toGlobal.WasInterrupted);
+                Assert.Contains(toGlobal.Moments, m => m.IsSettling); // easing back, not snapping
+                Assert.DoesNotContain("MapPlate.Sink", MotionDiagnostics.ActiveMoments); // its own clocks are gone
 
                 // within the settle everything of the old moment has landed: no ghost, nothing of it plays
                 CampfireTestHost.Wait(MainWindow.InterruptSettle + TimeSpan.FromMilliseconds(150));
-                Assert.False(matchEnd.IsPlaying, "Still playing: " + string.Join(", ", matchEnd.MomentNames));
+                Assert.False(toGlobal.IsPlaying, "Still playing: " + string.Join(", ", toGlobal.MomentNames));
                 Assert.Equal(0, Count<MapPicture>(plate));
-                Assert.DoesNotContain(MotionDiagnostics.ActiveMoments, n => n.StartsWith("EntityLegs.retract", StringComparison.Ordinal) || n.StartsWith("MapPlate.Sink", StringComparison.Ordinal));
+                Assert.DoesNotContain(MotionDiagnostics.ActiveMoments, n => n.StartsWith("MapPlate.Sink", StringComparison.Ordinal));
                 Assert.NotNull(plate.Campfire);
             }
             finally
@@ -286,23 +281,18 @@ public sealed class MainWindowMotionTests : IDisposable
                 IReadOnlyList<MotionMoment> born = Array.Empty<MotionMoment>();
                 scene.ViewModel.PropertyChanged += (_, e) =>
                 {
-                    if (e.PropertyName == nameof(MainViewModel.StatusScreen) && born.Count == 0 && scene.Window.CurrentMoment is { Name: "Active → MatchEnded" } m)
+                    if (e.PropertyName == nameof(MainViewModel.StatusScreen) && born.Count == 0 && scene.Window.CurrentMoment is { Name: "Active → Ready" } m)
                     {
                         born = m.Moments;
                     }
                 };
 
-                _ = Task.Run(() =>
-                {
-                    scene.Harness.DriveToTrial();
-                    scene.Harness.DriveToMenus();
-                });
-                WindowScene.PumpUntil(() => births.Any(b => b.Name == "Active → MatchEnded"), "the match end");
+                _ = Task.Run(() => scene.Harness.GlobalPresetHotkey.Press()); // F9: active -> ready, the map sinks
+                WindowScene.PumpUntil(() => births.Any(b => b.Name == "Active → Ready"), "the switch to Global");
                 IReadOnlyList<string> animated = MotionDiagnostics.FindAnimatedObjects(root);
                 Assert.NotEmpty(animated); // the fades
                 Assert.DoesNotContain(animated, a => a.Contains("Transform", StringComparison.Ordinal) || a.Contains("BlurEffect", StringComparison.Ordinal) || a.Contains(".Clip", StringComparison.Ordinal));
                 Assert.Empty(MotionDiagnostics.RunningLoops);
-                Assert.DoesNotContain("EntityLegs.retract", MotionDiagnostics.ActiveMoments); // no yank
 
                 // short fades only, like the prototype's A() under reduced motion (≤ 200 ms, starting ≤ 160 ms in): the
                 // whole change has played out well before half a second
@@ -586,19 +576,15 @@ public sealed class MainWindowMotionTests : IDisposable
                 Assert.Single(h.Sounds.Played);
                 Assert.False(scene.Window.IsLanding);
 
-                // the match ends (the lifecycle polls off the UI thread, as in the app), then F8 on the next loading screen
-                _ = Task.Run(() =>
-                {
-                    h.DriveToTrial();
-                    h.DriveToMenus();
-                });
-                WindowScene.PumpUntil(() => scene.Window.PresentedScreen?.State == ScreenState.MatchEnded, "the match end");
+                // F9 back to Global (handled off the UI thread, as in the app), then F8 on the next loading screen
+                _ = Task.Run(() => h.GlobalPresetHotkey.Press());
+                WindowScene.PumpUntil(() => scene.Window.PresentedScreen?.State == ScreenState.Ready, "the switch to Global");
                 h.Ocr.Text = string.Empty;
                 _ = Task.Run(() => h.Controller.TriggerDetectionAsync());
                 WindowScene.PumpUntil(() => scene.Window.PresentedScreen?.State == ScreenState.Scanning, "the next scan");
 
                 Assert.Contains(ScreenState.Active, seen);
-                Assert.Contains(ScreenState.MatchEnded, seen);
+                Assert.Contains(ScreenState.Ready, seen);
                 Assert.True(moved.Count == 0, "Moved behind the game: " + string.Join(" | ", moved));
                 CampfireTestHost.Wait(TimeSpan.FromMilliseconds(200));
                 Assert.Empty(MotionDiagnostics.ActiveMoments);
@@ -623,7 +609,7 @@ public sealed class MainWindowMotionTests : IDisposable
                 scene.Activate(true);
                 WindowScene.PumpUntil(() => MotionDiagnostics.ActiveMoments.Count == 0, "the window at rest", 8000);
                 StateMoment? before = scene.Window.CurrentMoment;
-                string[] story = { "MapPlate.Reveal", "MapPlate.Sink", "StatusView.detection", "FogBackdrop.flare", "EntityLegs.flex", "EntityLegs.retract", "StatusView.heroGlow" };
+                string[] story = { "MapPlate.Reveal", "MapPlate.Sink", "StatusView.detection", "FogBackdrop.flare", "EntityLegs.flex", "StatusView.heroGlow" };
 
                 // "Apply override": the clearing becomes the realm's map with a blur-bridged swap, not the fog reveal
                 vm.SelectedOverrideRealm = "MacMillan Estate";
@@ -641,7 +627,7 @@ public sealed class MainWindowMotionTests : IDisposable
                 string[] swap = { "MapPlate.Swap", "MapPlate.caption", "CrossfadeText.BlurRise", "CrossfadeText.BlurSoft", "StatusView.glide", "StatusView.tail", "FogBackdrop.map", "FogBackdrop.ember" };
                 Assert.True(!MotionDiagnostics.ActiveMoments.Intersect(swap).Any(), "Still playing: " + string.Join(", ", MotionDiagnostics.ActiveMoments));
 
-                // "Return to automatic": the map goes with the same quick swap, not the match end's sink
+                // "Return to automatic": the map goes with the same quick swap, not the sink a state change plays
                 vm.ReturnToAutoCommand.Execute(null);
                 Assert.NotEqual(ScreenState.Override, scene.Window.PresentedScreen!.State);
                 playing = MotionDiagnostics.ActiveMoments;

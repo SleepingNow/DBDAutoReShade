@@ -7,8 +7,8 @@ public sealed record PresetDecision(string PresetPath, bool IsGlobal, string Rea
 
 /// <summary>
 /// Pure map → realm → preset decision logic (fully unit-testable, no I/O):
-/// unconfigured realms, failed recognition and match end all resolve to Global.
-/// Manual override takes precedence until the match ends.
+/// unconfigured realms and failed recognition resolve to Global. A manual
+/// override takes precedence until the user ends it.
 /// </summary>
 public sealed class PresetDecisionService
 {
@@ -36,9 +36,6 @@ public sealed class PresetDecisionService
             ? "No realm identified — Global preset."
             : $"Realm '{realmName}' has no preset — Global preset.");
     }
-
-    public PresetDecision DecideOnMatchEnd(AppConfig config) =>
-        Global(config, "Match ended — Global preset.");
 
     /// <summary>
     /// Decide the preset for a manual override. The <see cref="PresetDecision.Reason"/> describes

@@ -17,9 +17,8 @@ namespace DBDAutoReShade.App.Controls;
 /// <item>Idle sway: almost imperceptible (±0.4°, 13-19 s), ambient, only while idle and <see cref="IsSwayAllowed"/>;
 /// it pauses in place.</item>
 /// <item><see cref="IsLeaning"/> / <see cref="Lean"/>: while the app reads, the legs creep toward the map (900 ms).</item>
-/// <item>One-shots: <see cref="Flex"/> (the flinch when the ember flares), <see cref="Twitch"/>, <see cref="Retract"/>
-/// (the yank up out of frame at match end, a held beat, then back), <see cref="RimRun"/> (a red light runs down the
-/// legs: restart needed).</item>
+/// <item>One-shots: <see cref="Flex"/> (the flinch when the ember flares), <see cref="Twitch"/>, <see cref="RimRun"/>
+/// (a red light runs down the legs: restart needed).</item>
 /// </list>
 /// Reduced motion: no pose, no sway; the rim run becomes a short brightening of the rim.
 /// </summary>
@@ -46,15 +45,12 @@ public sealed class EntityLegs : UserControl
     private static readonly (double Period, double Phase)[] SwayTimings = { (15000, 5000), (19000, 7000), (13000, 3000) };
 
     private readonly Canvas _canvas = new() { Width = ViewWidth, Height = ViewHeight };
-    private readonly RotateTransform _yankTurn = new(0, ViewWidth, 0);
-    private readonly TranslateTransform _yankMove = new();
     private readonly Leg[] _legs = new Leg[3];
     private readonly TranslateTransform _band = new();
     private readonly MotionPolicyWatch _watch;
     private readonly AmbientLoop _sway;
     private MotionMoment? _pose;
     private MotionMoment? _flex;
-    private MotionMoment? _retract;
     private MotionMoment? _rim;
 
     /// <summary>Creates the legs (idle).</summary>
@@ -91,8 +87,6 @@ public sealed class EntityLegs : UserControl
             _legs[i] = new Leg(legs[i], Hips[i], band, far: i == 0);
             _canvas.Children.Add(_legs[i].Pose);
         }
-
-        _canvas.RenderTransform = new TransformGroup { Children = { _yankTurn, _yankMove } };
 
         // drop-shadow(0 0 9px rgba(176,24,45,.22)), then the fade into the fog at the bottom
         var glow = new DropShadowEffect { Color = CampfirePalette.EntityColor, ShadowDepth = 0, BlurRadius = 18, Opacity = 0.32 };
@@ -193,33 +187,6 @@ public sealed class EntityLegs : UserControl
         moment.Begin();
     }
 
-    /// <summary>
-    /// Match end: the Entity takes the realm. A yank up out of frame (2 %, -36 %, -3°), a held beat, then it eases back
-    /// down (2 s in all).
-    /// </summary>
-    public void Retract()
-    {
-        _retract?.Stop();
-        _retract = null;
-        MotionPolicy policy = _watch.Policy;
-        if (!policy.ShouldAnimate || policy.ReducedMotion)
-        {
-            return;
-        }
-
-        // keyframes 0 (ease-in-out) → up at .28 → held to .46 (ease-out) → 0 of a 2 s iteration that is itself eased
-        // out (the prototype's A() default): up within about 140 ms, back by about 500 ms
-        const double ms = 2000;
-        double dx = 0.02 * ViewWidth, dy = -0.36 * ViewHeight;
-        WaapiKf[] Yank(double to) => new[] { new WaapiKf(0, 0, Ease.InOut), new WaapiKf(0.28, to), new WaapiKf(0.46, to, Ease.Out), new WaapiKf(1, 0) };
-        var moment = new MotionMoment(this, "EntityLegs.retract");
-        moment.Add(_yankMove, TranslateTransform.XProperty, Anim.Waapi(ms, Ease.Out, Yank(dx)));
-        moment.Add(_yankMove, TranslateTransform.YProperty, Anim.Waapi(ms, Ease.Out, Yank(dy)));
-        moment.Add(_yankTurn, RotateTransform.AngleProperty, Anim.Waapi(ms, Ease.Out, Yank(-3)));
-        _retract = moment;
-        moment.Begin();
-    }
-
     /// <summary>Restart needed: a red rim light runs down the legs once (1.3 s after 220 ms).</summary>
     public void RimRun()
     {
@@ -255,7 +222,7 @@ public sealed class EntityLegs : UserControl
     /// <summary>Freezes every running one-shot at <paramref name="time"/> (frame captures).</summary>
     public void FreezeAt(TimeSpan time)
     {
-        foreach (MotionMoment? moment in new[] { _pose, _flex, _retract, _rim })
+        foreach (MotionMoment? moment in new[] { _pose, _flex, _rim })
         {
             moment?.FreezeAt(time);
         }
@@ -286,7 +253,7 @@ public sealed class EntityLegs : UserControl
     {
         if (!_watch.Policy.ShouldAnimate)
         {
-            foreach (MotionMoment? moment in new[] { _pose, _flex, _retract, _rim })
+            foreach (MotionMoment? moment in new[] { _pose, _flex, _rim })
             {
                 moment?.Stop();
             }

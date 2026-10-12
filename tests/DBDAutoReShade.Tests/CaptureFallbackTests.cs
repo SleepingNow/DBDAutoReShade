@@ -130,8 +130,6 @@ public sealed class CaptureFallbackTests
         public List<CapturedImage> Returned { get; } = new();
         public int FailOnCall { get; set; } = -1;
 
-        public CapturedImage? CaptureClientArea(IntPtr hwnd) => null;
-
         public CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region)
         {
             Requested.Add(region);
@@ -181,6 +179,15 @@ public sealed class CaptureFallbackTests
         Assert.Equal(2, crops.Count);
         Assert.All(crops, c => Assert.Null(c));
         Assert.Null(gdi.CaptureRegion(IntPtr.Zero, new IntRegion(0, 0, 10, 10)));
-        Assert.Null(gdi.CaptureClientArea(IntPtr.Zero));
+    }
+
+    [Fact]
+    public void Capture_HasNoWholeFrameCapture()
+    {
+        // 1.2.1: only the scan captures, and only its OCR regions. The match tracking that polled
+        // whole frames is gone, and so is the API it used.
+        string[] members = typeof(IWindowCaptureService).GetMethods().Select(m => m.Name).ToArray();
+        Assert.Equal(new[] { nameof(IWindowCaptureService.CaptureRegion), nameof(IWindowCaptureService.CaptureRegions) }, members.Order().ToArray());
+        Assert.DoesNotContain(typeof(GdiWindowCaptureService).GetMethods(), m => m.Name.Contains("ClientArea", StringComparison.Ordinal));
     }
 }

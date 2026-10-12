@@ -173,7 +173,8 @@ public sealed partial class ControllerActivationTests
         Assert.Contains("Ctrl+Alt+F20", vm.OverrideHelpText);
         Assert.DoesNotContain("F8", vm.ScanHelpText + vm.OverrideHelpText);
         Assert.Contains("Return to automatic", vm.OverrideHelpText); // the Status button's label, as it reads
-        Assert.Contains("only when the app is tracking the match", vm.OverrideHelpText);
+        Assert.Contains("the Global preset hotkey (F9) or DBD exit", vm.OverrideHelpText);
+        Assert.DoesNotContain("match", vm.OverrideHelpText, StringComparison.OrdinalIgnoreCase); // nothing watches the match
     }
 
     [Fact]

@@ -23,23 +23,25 @@ public enum AppState
 
     /// <summary>
     /// The detected realm's preset (or Global) is the pending activation target:
-    /// it is sent as soon as DBD is focused (typically still on the loading screen).
-    /// Gameplay starting renews the retry budget.
+    /// it is sent as soon as DBD is focused (typically still on the loading
+    /// screen), with no deadline. (The name predates 1.2.1: the app no longer
+    /// watches for gameplay; this state only waits for DBD focus.)
     /// </summary>
     WaitingForGameplay,
 
-    /// <summary>The detected realm's preset (or Global) was switched to for the current match.</summary>
+    /// <summary>
+    /// The detected realm's preset (or Global) was switched to. It stays until the
+    /// user's next switch (a new scan, the Global preset hotkey, an override, a
+    /// Test) or DBD exit: the app does not watch for the match to end.
+    /// </summary>
     PresetActive,
 
     /// <summary>
-    /// User manually overrode automatic switching. Cleared by Return to Automatic,
-    /// a new detection, DBD exit, or the match end when the match is tracked and
-    /// auto-restore is on.
+    /// User manually overrode automatic switching. Cleared only by Return to
+    /// Automatic, a new detection, the Global preset hotkey ("Switch to Global")
+    /// or DBD exit.
     /// </summary>
     ManualOverride,
-
-    /// <summary>Trial ended; restoring the Global/Menu preset. Transient (from PresetActive or ManualOverride).</summary>
-    ReturningToMenu,
 
     /// <summary>
     /// An unexpected error occurred; see status message. Never sticky: the

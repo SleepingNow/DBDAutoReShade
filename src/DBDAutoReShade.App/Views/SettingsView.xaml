@@ -217,7 +217,9 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Behaviour" Style="{StaticResource GroupTitle}"/>
                     <StackPanel Grid.Column="2">
-                        <CheckBox Content="{x:Static vm:MainViewModel.AutoRestoreLabel}" IsChecked="{Binding AutoRestore, Mode=TwoWay}"/>
+                        <CheckBox Content="{x:Static vm:MainViewModel.StartWithGlobalLabel}" IsChecked="{Binding StartNextGameWithGlobal, Mode=TwoWay}"
+                                  AutomationProperties.HelpText="{x:Static vm:MainViewModel.StartWithGlobalHint}"/>
+                        <TextBlock Text="{x:Static vm:MainViewModel.StartWithGlobalHint}" Style="{StaticResource CfHint}" Margin="34,4,0,0"/>
 
                         <CheckBox Content="Play animations" IsChecked="{Binding AnimationsEnabled, Mode=TwoWay}" Margin="0,12,0,0"
                                   AutomationProperties.HelpText="{x:Static vm:MainViewModel.AnimationsHint}"/>

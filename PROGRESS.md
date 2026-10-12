@@ -1,8 +1,9 @@
 # DBD Auto ReShade — Progress
 
-**Current version: 1.2.0** (the Campfire UI on top of the 1.1.0 audit fix pass). Release build: 0 warnings.
-Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 off-screen snapshot renders and
-1 packaging check).
+**Current version: 1.2.1** (1.2.0's Campfire UI without match-end detection: it restored Global in the middle of
+a real match). Release build: 0 warnings.
+Tests: **1125/1125 passing** (plus 18 opt-in tests, skipped unless enabled: 17 off-screen snapshot renders
+and 1 packaging check).
 
 ## Stack choice
 - **.NET 10 (LTS), C# / WPF** (`net10.0-windows10.0.19041.0`): best Windows integration,
@@ -60,8 +61,8 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   window handle re-read every tick, paused ticks while DBD isn't visible, per-sample
   `SampleEvaluated`), `DebugCropStore`, `IGlobalHotkeyService` + `GlobalHotkeyService`,
   `KeySimulator` (SendInput, 80 ms hold, key-ups always sent), `DbdDiscoveryService`
-  (process/Steam/Epic, deduplicated), `ReshadeDiscoveryService`, `MatchLifecycleService`
-  (32×32 thumbnails, no OCR), `PresetActivationService` (typed failure reasons),
+  (process/Steam/Epic, deduplicated), `ReshadeDiscoveryService`,
+  `PresetActivationService` (typed failure reasons),
   `ISoundEffects` + `SoundEffectsService` (one voice, never throws) + `NullSoundEffects`.
 - `DBDAutoReShade.App` (WPF):
   - Glue: `AppController` (+ `ActivateGlobalNow`, `MapDetected`, the 1.2 settings),
@@ -84,9 +85,9 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
     `CampfirePalette`, `CampfireFonts`.
   - Assets: `Maps/*.png` + `map-images.json`, `Fonts/*.ttf` + OFL texts, `Sounds/great.wav`,
     `CREDITS.md`.
-- `DBDAutoReShade.Tests` (xUnit): **1144 tests passing, 18 opt-in** (`Campfire/` holds the UI tests).
+- `DBDAutoReShade.Tests` (xUnit): **1125 tests passing, 18 opt-in** (`Campfire/` holds the UI tests).
 
-## Runtime model (v1.2.0)
+## Runtime model (v1.2.1)
 - **Scan**: the detection hotkey toggles an open-ended scan (no timeout). Each tick OCRs the
   map and realm regions; a tick is read only when DBD is the foreground window or none of the
   10 × 3 probe points per region hits another top-level window (DBD not minimized or cloaked).
@@ -96,13 +97,15 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   other realm. The orchestrator's
   single-shot mode (`DetectionPolicy.TimeoutSeconds`) is kept for its API but not used by the app.
 - **Activation**: every switch (detected realm, manual override, Return to automatic, Test,
-  match end, scan without a confident read, Global preset hotkey / "Switch to Global") becomes
+  scan without a confident read, Global preset hotkey / "Switch to Global") becomes
   the ONE desired target; a newer one supersedes the older. It is sent immediately when DBD runs
   and is focused, otherwise by a worker that checks every 250 ms until success, supersession, a
-  final failure or its deadline (detected: none while waiting for gameplay; override, Return to
-  automatic and Global preset hotkey: 60 s; Test: 15 s; match end and scan without result:
-  10 min). Waiting for focus costs nothing; rejected sends are retried up to 3 times per request,
-  then reported with the fix. The active preset changes only after a successful send;
+  final failure or its deadline (detected: none; override, Return to automatic and Global preset
+  hotkey: 60 s; Test: 15 s; scan without result: 10 min). Waiting for focus costs nothing;
+  rejected sends are retried up to 3 times per request, then the request fails for good and the
+  status says how to recover (a detected preset: state → Ready, "press F8 on a loading screen to
+  try again, or use the manual override"; 1.2.1 — before, it stayed the target until gameplay
+  started). The active preset changes only after a successful send;
   ReShade.ini's `PresetPath` is read before the send ("already active in ReShade") and watched
   for ~2 s after it ("confirmed by ReShade").
 - **Global preset hotkey** (1.2, default F9, `globalHotkey`): a second registration, never the
@@ -111,9 +114,9 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   keystrokes). The handler only queues the press (leaf `_globalPressLock`); presses run one at a
   time on the thread pool, a press waiting to start absorbs later ones. `ActivateGlobalNow`:
   DBD not running / no Global preset → status only; otherwise the running scan is cancelled
-  without its own "no read → Global" request, the pending target, the override and the match
-  tracking are dropped (lifecycle disarmed), state → Ready, and Global is requested (origin
-  `Hotkey`, or `GlobalRequest` from the Status override's "Global / Menu").
+  without its own "no read → Global" request, the pending target and the override are dropped,
+  state → Ready, and Global is requested (origin `Hotkey`, or `GlobalRequest` from the Status
+  override's "Global / Menu"). It is the way back to Global after a match.
 - **Map found** (1.2): `MapDetected(realm, map, confidence)` is raised once per accepted
   confident detection, before the switch and with no controller lock held. `GreatCoordinator`
   lands the skill check when the window is shown, not minimized and active, the Status page is
@@ -131,17 +134,22 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   persisted next to the config until DBD exits) blocks names whose current (combo, path)
   it doesn't contain (`RestartRequired`). A combo that would first fire an earlier entry for
   another preset (ReShade's `ForceShortcutModifiers=0`) is never sent (`ShortcutClash`).
-- **Lifecycle**: armed with the loading screen at a confident detection; InTrial only when
-  observed (3 consecutive far polls, 2.5 s apart); BackToMenus after ≥ 45 s in the trial and
-  4 consecutive polls far from the gameplay reference (drift re-based). Only frames of DBD in
-  front count; idle phases capture nothing.
-- **DBD exit**: auto-restore on + Global set → `PresetPath` in ReShade.ini becomes Global,
-  unless ReShade.ini shows the user's own pick made after a confirmed switch to Global.
-- **Concurrency** (`AppController` class doc): lock order `_sendLock` | `_lifecycleCommandGate`
-  → `_gate` → { lifecycle lock, `_iniWriteLock` } (leaf locks); `_globalPressLock` is a leaf
-  taken alone. No capture, key send, hotkey (un)registration (either hotkey) or lifecycle command
-  runs under `_gate`; every ReShade.ini write holds `_iniWriteLock`; status writes go through
-  `SetStatusLocked` / `SetRequestStatusLocked`; `MapDetected` is raised with no lock held.
+- **No match tracking** (1.2.1): the app never tries to tell when gameplay starts or a match
+  ends, and the screen is captured only by a running scan (its two OCR regions;
+  `IWindowCaptureService` has no whole-frame capture API, though the PrintWindow fallback renders
+  one in-memory client frame per tick and crops the regions from it). A switched preset stays until the user's
+  next switch: a new scan (F8), the Global preset hotkey / "Switch to Global" (F9), an override or
+  Return to automatic, a Test, a scan without a confident read, or DBD exit. A manual override
+  lasts until Return to automatic, F8, F9 or DBD exit.
+- **DBD exit**: "Start the next game with the Global preset" on (`autoRestoreGlobalOnMenu`,
+  default true; the C# property is `StartNextGameWithGlobal`) + Global set → `PresetPath` in
+  ReShade.ini becomes Global, unless ReShade.ini shows the user's own pick made after a confirmed
+  switch to Global. The setting gates only this write.
+- **Concurrency** (`AppController` class doc): lock order `_sendLock` → `_gate` →
+  `_iniWriteLock` (a leaf lock); `_globalPressLock` is a leaf taken alone. No capture, key send or
+  hotkey (un)registration (either hotkey) runs under `_gate`; every ReShade.ini write holds
+  `_iniWriteLock`; status writes go through `SetStatusLocked` / `SetRequestStatusLocked`;
+  `MapDetected` is raised with no lock held.
 
 ## Completed phases
 - Phase 1 — Foundation: solution, architecture, UI shell, config, DB schema, tests. ✅
@@ -155,6 +163,7 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   toggle scanning, Debug Mode crop sets (bounded, failed scans only). ✅
 - Phase 6 — Lifecycle + activation: confident read → immediate focus-aware switch, Global
   restore on menu (debounced, conservative, disable-able), manual override + auto-clear. ✅
+  (The match-end restore and the override's auto-clear were removed in 1.2.1.)
 - Phase 7 — GUI: wizard, Status/Presets/Settings, hotkey editor, Test buttons, Reset. ✅
   (No Detect button, no tray — X exits fully.)
 - Phase 8 — DB updater: HTTPS manifest (8 s timeout), download (30 s, ≤ 5 MB), SHA-256,
@@ -168,6 +177,8 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
   The portable ZIP and `publish/` folder in the repo root predate 1.1.0; re-run the publish
   command from the README and zip the whole publish folder (the exe and its `Licenses\`
   folder; the WPF native libraries and the Campfire assets are bundled into the exe) to ship it.
+- Phase 12 — v1.2.1 (below): match-end detection removed after a false trigger in a real match;
+  0 warnings, 1125/1125 tests + 18 opt-in. ✅
 
 ## Important decisions / verified facts
 1. **ReShade format verified** against ReShade source (`runtime.cpp`, `ini_file.cpp`) + official
@@ -194,8 +205,9 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
 5. Activation requires DBD focused (SendInput goes to the foreground window). Every request
    waits for focus truthfully and says so; nothing is reported as switched before the keys
    went out.
-6. Lifecycle match tracking is a **best-effort external heuristic** (see Runtime model); it
-   can be disabled in Settings ("Restore the Global preset when a match ends").
+6. **No match tracking** (1.2.1): the 1.0–1.2.0 screen-change heuristic that guessed the match
+   end (32×32 thumbnails every 2.5 s) restored Global in the middle of the owner's real match, so
+   it was removed rather than tuned. F9 (the Global preset hotkey) is the way back to Global.
 7. **Map pictures** (1.2): Behaviour Interactive's in-game map icons from Dead by Daylight, via
    the Dead by Daylight Wiki (deadbydaylight.wiki.gg) — 44 pictures, one per built-in map (a test
    checks every map of the built-in database has one), cropped to the picture (torn frames
@@ -222,7 +234,7 @@ Tests: **1144/1144 passing** (plus 18 opt-in tests, skipped unless enabled: 17 o
     WM_ACTIVATE), and compared with the prototype's headless-Chromium reference renders.
 
 ## Test status
-`dotnet test -c Release` — **1144/1144 passing** (0 warnings; 1162 in total, 18 opt-in skipped),
+`dotnet test -c Release` — **1125/1125 passing** (0 warnings; 1143 in total, 18 opt-in skipped),
 covering: DB schema/lookups/
 corruption/override precedence/BOM, normalization (incl. Unicode dashes), similarity, fuzzy
 matching (ambiguity refusal, East/West Wing, map/realm cross-check), presets (valid/missing/
@@ -236,8 +248,9 @@ no-op first sync), diagnostics, aggregator (window/veto/fast path), OCR regions,
 stop races, handle changes, paused ticks, debug sets and retention), scan occlusion probe,
 updater (newer/older/hash/schema/version/size/rollback/non-HTTPS/cancel), hotkey parsing and
 real registration (incl. refused ReShade combos), SendInput sequences and stuck-key release,
-process monitor and integrity levels, Steam discovery, ReShade search locations, lifecycle
-(trial/menu/drift/motion/focus, deadlock stress), controller (focus-aware activation for every
+process monitor and integrity levels, Steam discovery, ReShade search locations, no match
+tracking (nothing captured outside a scan, presets and overrides stay until the user switches, the
+startup-preset setting and its old JSON key), controller (focus-aware activation for every
 source, verification, restart and clash blocking, DBD exit startup preset, Reset Settings,
 hotkey update; the Global preset hotkey: queueing, folding, no interleaving, refused combos, the
 1.1 → 1.2 upgrade path), the WAV maths and the sound service, the embedded `great.wav`, the
@@ -254,6 +267,48 @@ hotkeys (Ctrl+Alt+F21/F22, taking turns across test processes). Discovery and se
 tests don't depend on files under `%TEMP%` or `%LOCALAPPDATA%`. Opt-in: `DBD_SNAPSHOTS=<dir>`
 renders every state on every page (1280×800 and 1024×680), the wizard and motion contact sheets;
 `DBD_PUBLISH=<dir>` runs the README's publish command and checks the package.
+
+## v1.2.1 — removed match-end detection
+The owner's first real in-game test: the app decided the match had finished while it was still
+running and switched back to the Global preset. Match-end detection (and the gameplay-start
+detection behind it) was a best-effort heuristic on screen changes, so it was removed after a
+false trigger in a real match instead of being tuned again.
+
+**Behaviour now**
+- The app never tries to detect gameplay start or a match end. The realm's preset stays on until
+  you switch: **F9** (the Global preset hotkey, or "Switch to Global" on the Status page), a new
+  scan (**F8**), a manual override or Return to automatic, a Test, or a scan without a confident
+  read. Nothing captures the screen outside a scan any more (no periodic whole-frame capture).
+- A manual override lasts until Return to automatic, a new scan, F9 or DBD exit (it no longer
+  clears at a match end); the Status page's help text says so.
+- Settings → Behaviour: "Restore the Global preset when a match ends" is now **"Start the next game
+  with the Global preset"** ("When Dead by Daylight closes, the app sets your Global preset as
+  ReShade's startup preset."). Same config key (`autoRestoreGlobalOnMenu`, default true), so an
+  existing choice carries over; it gates only the startup-preset write at DBD exit, which it
+  already did before.
+- The "Match ended" Status state, its plate ("Global preset restored" / "Last match: …") and the
+  Entity's yank are gone; the map still sinks into the fog when F9 takes you back to Global.
+- A detected preset whose sends Windows rejected 3 times now fails for good (state → Ready, "Press
+  F8 on a loading screen to try again, or use the manual override."). Before, it stayed the
+  pending target ("waiting for you to click into the game") because gameplay starting retried it;
+  with that gone nothing would ever have sent it.
+
+**Code**
+- Removed `MatchLifecycleService` (+ `LifecyclePhase`, `LifecycleOptions`), its thumbnail helpers
+  (`ImagePreprocessingService.Thumbnail32` / `ThumbnailDistance`), the whole-frame
+  `IWindowCaptureService.CaptureClientArea`, `AppState.ReturningToMenu`,
+  `PresetDecisionService.DecideOnMatchEnd`, `ScreenState.MatchEnded`, `EntityLegs.Retract`, and in
+  `AppController` the lifecycle tickets, `_lifecycleCommandGate`, the arm/disarm calls,
+  `ReturnToGlobalAfterMatch`, the `MatchEnd` activation origin, `MatchEndFocusWindow` and
+  `ActivationRequest.Exhausted` (only gameplay start ever renewed an exhausted request). The lock
+  order is now `_sendLock` → `_gate` → `_iniWriteLock`.
+- `AppConfig.AutoRestoreGlobalOnMenu` → `StartNextGameWithGlobal` (JSON name unchanged);
+  `AppController.SetAutoRestore` → `SetStartNextGameWithGlobal`.
+- Tests: the lifecycle tests are gone; the motion and snapshot tests that used the match end now
+  use F9; new regression tests prove that nothing is captured outside a scan, that a detected
+  preset and a manual override stay until the user ends them, that the setting gates only the
+  DBD-exit write, and that old configs keep their `autoRestoreGlobalOnMenu` choice.
+- `docs/screenshots/settings.png` re-rendered off-screen with the new checkbox.
 
 ## v1.2.0 — Campfire UI
 The owner chose the "Campfire" prototype (`prototypes/a-campfire`) and asked for the app in
@@ -286,7 +341,7 @@ additions are below.
   15 s countdown ring tied to the controller's pending test, Change/Choose file, Clear with an
   inline confirmation); a row without a preset has its map strip fogged over.
 - Settings: Detection hotkey, Global preset hotkey, Paths (selectable), Behaviour (auto-restore,
-  Play animations, Great sound, volume + Play sound, Debug mode), Map database, ReShade check
+  renamed in 1.2.1; Play animations, Great sound, volume + Play sound, Debug mode), Map database, ReShade check
   (tagged lines; selectable text when the clipboard is busy), Danger zone (Reset with an inline
   confirmation). Every action shows its outcome next to its group
   (`AppController.LastSaveError`, the controller's status after its lead sentence).
@@ -331,7 +386,8 @@ kept but not registered, with the reason shown). Diagnostics list both hotkeys a
   opacity swap, no delay); the sound still plays.
 - Moments ported from the prototype: one orchestrated moment per state change (a new state
   interrupts the previous one from where it is), fog-clears map reveal, ember confirm, match-end
-  sink with the legs' yank, campfire catch / die-out / flicker with 12 rising embers, the skill
+  sink with the legs' yank (1.2.1: the match end is gone; the sink plays when F9 switches to Global,
+  the yank was removed), campfire catch / die-out / flicker with 12 rising embers, the skill
   check, the waiting-for-focus heartbeat, the restart rim-light run and banner drop, legs sway and
   lean-in, blur-bridged text crossfades, Presets hero swap / selection glide / clear fog / filter
   fade-up, tab crossfade (pointer only), button press scale. Transform and opacity only (plus a
@@ -376,7 +432,7 @@ A static audit of 1.0.x found the problems below; all are fixed with regression 
   Windows rejects part of a send (no stuck modifiers).
 - F8 always starts a fresh attempt, also after an error ("Busy (Error)" no longer sticks).
 
-**Match start / end**
+**Match start / end** (1.2.1 removed the match tracking: the first four points no longer apply)
 - Global was restored mid-match: the loading-screen switch counted as "in the match" with the
   loading screen as reference. Gameplay now has to be observed first.
 - Camera motion alone no longer counts as "back to menus", and alt-tabbed moments are ignored.
@@ -389,7 +445,7 @@ A static audit of 1.0.x found the problems below; all are fixed with regression 
   the next launch no longer starts with the last realm's preset. A preset you picked in the
   overlay after a confirmed Global switch is kept and shown as the active preset.
 - Return to Automatic only acts during an override; the override text says truthfully when
-  the match end clears it.
+  the match end clears it (since 1.2.1 nothing clears it but the user or DBD exit).
 
 **Detection / OCR**
 - The scan reads only Dead by Daylight itself: while DBD is the active window, or while nothing
@@ -462,8 +518,8 @@ A static audit of 1.0.x found the problems below; all are fixed with regression 
 - OCR accuracy on the real loading-screen font can only be validated live (no game here);
   tuning path: regions → preprocessing → thresholds (`MapMatchingService`, `DetectionPolicy`);
   Debug Mode saves the exact crops.
-- Match tracking is heuristic and watches only while DBD is the foreground window; exotic flows
-  may be missed. F8 re-detection, manual override, Return to automatic and F9 always work.
+- Nothing switches back to Global by itself after a match (by design since 1.2.1): press F9, or
+  F8 on the next loading screen. On DBD exit Global becomes the startup preset (setting on).
 - The unfocused-scan check hit-tests top-level windows: click-through overlays over DBD's
   map/realm text regions aren't seen as covering it.
 - Fullscreen-exclusive capture falls back to PrintWindow; a frame that stays black is read as
@@ -485,10 +541,10 @@ A static audit of 1.0.x found the problems below; all are fixed with regression 
   RegisterHotKey swallowing injected keystrokes (the reason for the refused ReShade combos) rests
   on its documented exact-modifier matching, not on a live reproduction.
 - While you play, the window is inactive, so the moments that happen then (the ReShade confirm,
-  the match-end sink) are applied instantly and not replayed; the Great lands visibly only when the
+  the sink when F9 switches to Global) are applied instantly and not replayed; the Great lands visibly only when the
   window is in front on the Status page as the map is found (e.g. DBD on another monitor).
 - The setup wizard is not resizable (it is fitted to the work area and its steps scroll).
 
 ## Next work item
 - Live validation against DBD + ReShade, including the Campfire window, F9 and the Great sound;
-  tune regions/thresholds from Debug Mode crops; re-publish the portable ZIP as 1.2.0.
+  tune regions/thresholds from Debug Mode crops; re-publish the portable ZIP as 1.2.1.

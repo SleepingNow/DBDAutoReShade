@@ -612,7 +612,6 @@ public sealed partial class ControllerActivationTests
         Assert.False(h.Controller.HasPendingActivation);
         Assert.True(h.Controller.LastDetection?.WasStopped);
         Assert.Empty(detected);
-        Assert.Equal(LifecyclePhase.Unknown, h.Lifecycle.Phase);
 
         // F8 afterwards: a fresh scan, as always.
         h.Ocr.Text = "FRACTURED COWSHED\nCOLDWIND FARM";
@@ -657,19 +656,17 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task GlobalHotkey_WhileTheDetectedPresetWaitsForFocus_ReplacesIt_AndStopsTrackingTheMatch()
+    public async Task GlobalHotkey_WhileTheDetectedPresetWaitsForFocus_ReplacesIt()
     {
         ControllerHarness h = HarnessOnColdwind();
         h.UnfocusRightAfterTheRead();
         await h.Controller.TriggerDetectionAsync();
         Assert.Equal(AppState.WaitingForGameplay, h.States.State);
-        Assert.Equal(LifecyclePhase.WatchingForTrial, h.Lifecycle.Phase);
         Assert.True(h.Controller.HasPendingActivation);
 
         h.GlobalPresetHotkey.Press(); // still unfocused
 
         Assert.Equal(AppState.Ready, h.States.State);
-        Assert.Equal(LifecyclePhase.Unknown, h.Lifecycle.Phase); // disarmed: no match-end restore follows
         Assert.Contains("F9 pressed. Waiting for DBD focus", h.Controller.StatusMessage);
 
         h.Focused = true;
@@ -702,25 +699,26 @@ public sealed partial class ControllerActivationTests
     }
 
     [Fact]
-    public async Task GlobalHotkey_DuringAMatch_Switches_AndTheMatchEndAddsNothing()
+    public async Task GlobalHotkey_DuringAMatch_Switches_AndNothingElseFollows()
     {
-        ControllerHarness h = Harness(new ControllerHarnessOptions { VerifyDelayMs = 60_000 });
+        ControllerHarness h = Harness(new ControllerHarnessOptions { VerifyDelayMs = 60_000, RetryInterval = TimeSpan.FromMilliseconds(10) });
         await h.Controller.TriggerDetectionAsync();
         Assert.Equal(AppState.PresetActive, h.States.State);
         h.ReshadeSaves(h.ColdwindIni);
-        h.DriveToTrial();
 
         h.GlobalPresetHotkey.Press();
 
         Assert.Equal(new[] { "Coldwind Farm", AppConfigKeys.GlobalShortcutKey }, h.SentNames());
         Assert.Equal(AppState.Ready, h.States.State);
-        Assert.Equal(LifecyclePhase.Unknown, h.Lifecycle.Phase);
         Assert.Equal(GlobalSwitched, h.Controller.StatusMessage);
 
-        h.DriveToMenus(); // the match ends: no longer tracked, so no second Global restore
+        // The rest of the match and the menus after it: nothing else is sent (no match tracking).
+        h.Advance(TimeSpan.FromMinutes(20));
+        await Task.Delay(200);
         Assert.Equal(2, h.Keys.CallCount);
         Assert.Equal(GlobalSwitched, h.Controller.StatusMessage);
         Assert.Equal(AppState.Ready, h.States.State);
+        Assert.False(h.Controller.HasPendingActivation);
     }
 
     [Fact]
@@ -1176,9 +1174,8 @@ public sealed partial class ControllerActivationTests
         using var hotkey = new ControllerHarness.FakeHotkeyService();
         var capture = new ControllerHarness.FakeCapture();
         using var detector = new DetectionOrchestrator(new ControllerHarness.FakeOcr(), new MapMatchingService(), db, capture);
-        using var lifecycle = new MatchLifecycleService(capture);
         using var controller = new AppController(
-            config, db, new RuntimeStateService(), dbd, hotkey, detector, lifecycle,
+            config, db, new RuntimeStateService(), dbd, hotkey, detector,
             new PresetActivationService(new ControllerHarness.FakeKeys(), _ => true),
             new PresetDecisionService(), new ReshadeConfigurationService(),
             discoverDbdExePath: static () => null,

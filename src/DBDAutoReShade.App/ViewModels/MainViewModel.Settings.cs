@@ -27,7 +27,7 @@ public sealed partial class MainViewModel
     private string? _detectionHotkeyProblem;
     private string? _globalHotkeyProblem;
     private bool _debugMode;
-    private bool _autoRestore = true;
+    private bool _startNextGameWithGlobal = true;
     private bool _animationsEnabled = true;
     private bool _soundEnabled = true;
     private double _soundVolumePercent = AppConfig.DefaultSoundVolume * 100;
@@ -101,6 +101,7 @@ public sealed partial class MainViewModel
             if (SetProperty(ref _globalHotkeyText, value))
             {
                 RaisePropertyChanged(nameof(RailGlobalHotkeyName));
+                RaisePropertyChanged(nameof(OverrideHelpText));
             }
         }
     }
@@ -115,6 +116,7 @@ public sealed partial class MainViewModel
             {
                 _clearGlobalHotkeyCommand.RaiseCanExecuteChanged();
                 RaiseRailGlobalKey();
+                RaisePropertyChanged(nameof(OverrideHelpText));
             }
         }
     }
@@ -217,6 +219,7 @@ public sealed partial class MainViewModel
             if (SetProperty(ref _globalHotkeyProblem, value))
             {
                 RaiseRailGlobalKey();
+                RaisePropertyChanged(nameof(OverrideHelpText)); // an unavailable key is not named as a way out
             }
         }
     }
@@ -252,14 +255,18 @@ public sealed partial class MainViewModel
         }
     }
 
-    public bool AutoRestore
+    /// <summary>
+    /// "Start the next game with the Global preset" (<see cref="StartWithGlobalLabel"/>): when Dead by Daylight closes,
+    /// the app sets the Global preset as ReShade's startup preset. Saved at once.
+    /// </summary>
+    public bool StartNextGameWithGlobal
     {
-        get => _autoRestore;
+        get => _startNextGameWithGlobal;
         set
         {
-            if (SetProperty(ref _autoRestore, value))
+            if (SetProperty(ref _startNextGameWithGlobal, value))
             {
-                _controller.SetAutoRestore(value);
+                _controller.SetStartNextGameWithGlobal(value);
                 TellBehaviourSaved();
             }
         }
@@ -864,10 +871,10 @@ public sealed partial class MainViewModel
             RaisePropertyChanged(nameof(DebugMode));
         }
 
-        if (_autoRestore != c.Config.AutoRestoreGlobalOnMenu)
+        if (_startNextGameWithGlobal != c.Config.StartNextGameWithGlobal)
         {
-            _autoRestore = c.Config.AutoRestoreGlobalOnMenu;
-            RaisePropertyChanged(nameof(AutoRestore));
+            _startNextGameWithGlobal = c.Config.StartNextGameWithGlobal;
+            RaisePropertyChanged(nameof(StartNextGameWithGlobal));
         }
 
         if (_animationsEnabled != c.AnimationsEnabled)

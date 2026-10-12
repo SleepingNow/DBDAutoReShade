@@ -310,7 +310,6 @@ public sealed class MotionPolicyTests
             scene.Fire.DieOut();
             scene.Plate.SetScene(PlateScene.Map("MacMillan Estate", "Coal Tower"), PlateTransition.Reveal);
             scene.Plate.Confirm();
-            scene.Legs.Retract();
             scene.Legs.RimRun();
             scene.Legs.Flex();
             scene.Backdrop.Flare(TimeSpan.Zero, TimeSpan.FromMilliseconds(700));
@@ -344,7 +343,6 @@ public sealed class MotionPolicyTests
                 Assert.Equal(TimeSpan.Zero, scene.Plate.LandGreat("Coal Tower"));
                 scene.Plate.SetScene(PlateScene.Map("MacMillan Estate", "Coal Tower"), PlateTransition.Reveal);
                 scene.Plate.Confirm();
-                scene.Legs.Retract();
                 scene.Legs.RimRun();
                 scene.Legs.Flex();
                 scene.Legs.Lean(true);

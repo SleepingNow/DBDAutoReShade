@@ -273,9 +273,11 @@ public sealed class MainWindowLayoutTests : IDisposable
                 AssertCampfireMenu(filter.ContextMenu, theme, "Cut", "Copy", "Paste", "Select all");
                 Assert.NotSame(manifest.ContextMenu, filter.ContextMenu); // one menu per text box
 
-                // the override help quotes the checkbox as it reads
-                CheckBox autoRestore = FindAll<CheckBox>(settings).First(c => c.Content is string text && text.StartsWith("Restore", StringComparison.Ordinal));
-                Assert.Equal(MainViewModel.AutoRestoreLabel, autoRestore.Content);
+                // Behaviour: "Start the next game with the Global preset" with its hint; nothing about a match end
+                CheckBox startWithGlobal = FindAll<CheckBox>(settings).Single(c => Equals(c.Content, MainViewModel.StartWithGlobalLabel));
+                Assert.Equal(MainViewModel.StartWithGlobalHint, System.Windows.Automation.AutomationProperties.GetHelpText(startWithGlobal));
+                Assert.Contains(FindAll<TextBlock>(settings), t => t.Text == MainViewModel.StartWithGlobalHint);
+                Assert.DoesNotContain(FindAll<CheckBox>(settings), c => c.Content is string text && text.Contains("match", StringComparison.OrdinalIgnoreCase));
 
                 // the capture button's accessible name follows its label
                 var button = (Button)settings.FindName("HotkeyButton");

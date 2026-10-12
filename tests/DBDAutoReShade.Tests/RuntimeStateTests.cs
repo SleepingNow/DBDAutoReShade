@@ -16,8 +16,18 @@ public sealed class RuntimeStateTests
         Assert.True(states.TryTransitionTo(AppState.RealmIdentified)); // OCR success stops detection
         Assert.True(states.TryTransitionTo(AppState.WaitingForGameplay));
         Assert.True(states.TryTransitionTo(AppState.PresetActive));
-        Assert.True(states.TryTransitionTo(AppState.ReturningToMenu)); // match end
-        Assert.True(states.TryTransitionTo(AppState.Ready));
+        Assert.True(states.TryTransitionTo(AppState.Ready)); // the Global preset hotkey (F9)
+        Assert.True(states.TryTransitionTo(AppState.DetectingLoadingScreen)); // F8 on the next loading screen
+    }
+
+    [Fact]
+    public void ThereIsNoMatchEndState()
+    {
+        // 1.2.1 removed match-end detection: no state stands for "back to menus".
+        Assert.DoesNotContain("ReturningToMenu", Enum.GetNames<AppState>());
+        Assert.Equal(
+            new[] { "WaitingForDbd", "Ready", "DetectingLoadingScreen", "RealmIdentified", "WaitingForGameplay", "PresetActive", "ManualOverride", "Error" },
+            Enum.GetNames<AppState>());
     }
 
     [Fact]
@@ -35,7 +45,7 @@ public sealed class RuntimeStateTests
         var states = new RuntimeStateService();
         states.ResetTo(AppState.Ready);
         Assert.False(states.TryTransitionTo(AppState.PresetActive)); // must detect first
-        Assert.False(states.TryTransitionTo(AppState.ReturningToMenu));
+        Assert.False(states.TryTransitionTo(AppState.WaitingForGameplay));
         Assert.Equal(AppState.Ready, states.State);
     }
 
@@ -45,8 +55,9 @@ public sealed class RuntimeStateTests
         var states = new RuntimeStateService();
         states.ResetTo(AppState.PresetActive);
         Assert.True(states.TryTransitionTo(AppState.ManualOverride));
-        Assert.True(states.TryTransitionTo(AppState.ReturningToMenu));
-        Assert.True(states.TryTransitionTo(AppState.Ready));
+        Assert.True(states.TryTransitionTo(AppState.Ready)); // Return to automatic, or the Global preset hotkey
+        Assert.True(states.TryTransitionTo(AppState.ManualOverride));
+        Assert.True(states.TryTransitionTo(AppState.DetectingLoadingScreen)); // a new scan ends it too
     }
 
     [Fact]

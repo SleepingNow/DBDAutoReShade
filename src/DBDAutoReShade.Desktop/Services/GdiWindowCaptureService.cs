@@ -4,11 +4,16 @@ using DBDAutoReShade.Desktop.Interop;
 
 namespace DBDAutoReShade.Desktop.Services;
 
-/// <summary>External window capture. Screen DC BitBlt first, PrintWindow fallback.</summary>
+/// <summary>
+/// External window capture of client-area regions (the scan's OCR regions). Screen DC
+/// BitBlt first, PrintWindow fallback. There is deliberately no whole-frame capture
+/// API: the app captures only while a scan reads the loading screen (1.2.1 removed the
+/// match tracking that polled whole frames). An implementation's fallback may still
+/// render the whole client in memory to crop the regions from (see
+/// <see cref="GdiWindowCaptureService"/>); only the regions are returned.
+/// </summary>
 public interface IWindowCaptureService
 {
-    CapturedImage? CaptureClientArea(IntPtr hwnd);
-
     CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region);
 
     /// <summary>
@@ -47,11 +52,12 @@ public interface IWindowCaptureService
 /// <summary>
 /// GDI capture of the live DBD client area. All native handles are released
 /// per capture; pixel data is plain managed memory (see <see cref="CapturedImage"/>).
-/// Only the small OCR regions are captured during detection — never full frames at high rate.
+/// Only the small OCR regions are returned, and only while a scan runs.
 /// A screen BitBlt that fails, or that returns a frame whose pixels are all
 /// exactly black (typical of exclusive fullscreen / flip-model presentation),
-/// falls back to PrintWindow with full-content rendering; when that fallback is
-/// needed for several regions of one tick, the full client is captured once.
+/// falls back to PrintWindow with full-content rendering. PrintWindow can only
+/// render the whole client, so the fallback captures it once per call (in
+/// memory), crops every region that needs it and disposes the frame.
 /// </summary>
 public sealed class GdiWindowCaptureService : IWindowCaptureService
 {
@@ -60,18 +66,6 @@ public sealed class GdiWindowCaptureService : IWindowCaptureService
 
     /// <summary>Flags for the PrintWindow fallback: client area only, full-content rendering.</summary>
     internal const uint PrintWindowFlags = NativeMethods.PW_CLIENTONLY | PW_RENDERFULLCONTENT;
-
-    public CapturedImage? CaptureClientArea(IntPtr hwnd)
-    {
-        if (!DbdWindowService.TryGetClientBounds(hwnd, out var b) || b.IsEmpty)
-        {
-            return null;
-        }
-
-        return SelectCapture(
-            CaptureScreenRect(b.ScreenX, b.ScreenY, b.Width, b.Height),
-            () => CaptureViaPrintWindow(hwnd, new IntRegion(0, 0, b.Width, b.Height)));
-    }
 
     public CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region)
     {

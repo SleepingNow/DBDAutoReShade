@@ -15,9 +15,8 @@ public sealed class RuntimeStateService
         [AppState.DetectingLoadingScreen] = new() { AppState.RealmIdentified, AppState.Ready, AppState.WaitingForDbd, AppState.Error },
         [AppState.RealmIdentified] = new() { AppState.WaitingForGameplay, AppState.PresetActive, AppState.Ready, AppState.WaitingForDbd, AppState.Error },
         [AppState.WaitingForGameplay] = new() { AppState.PresetActive, AppState.Ready, AppState.DetectingLoadingScreen, AppState.ManualOverride, AppState.WaitingForDbd, AppState.Error },
-        [AppState.PresetActive] = new() { AppState.ReturningToMenu, AppState.Ready, AppState.DetectingLoadingScreen, AppState.ManualOverride, AppState.WaitingForDbd, AppState.Error },
-        [AppState.ManualOverride] = new() { AppState.ReturningToMenu, AppState.Ready, AppState.DetectingLoadingScreen, AppState.WaitingForDbd, AppState.Error },
-        [AppState.ReturningToMenu] = new() { AppState.Ready, AppState.WaitingForDbd, AppState.Error },
+        [AppState.PresetActive] = new() { AppState.Ready, AppState.DetectingLoadingScreen, AppState.ManualOverride, AppState.WaitingForDbd, AppState.Error },
+        [AppState.ManualOverride] = new() { AppState.Ready, AppState.DetectingLoadingScreen, AppState.WaitingForDbd, AppState.Error },
         // Error is never sticky: the detection hotkey starts a fresh scan, an
         // override still works, and DBD (re)appearing returns to Ready.
         [AppState.Error] = new() { AppState.Ready, AppState.DetectingLoadingScreen, AppState.ManualOverride, AppState.WaitingForDbd },

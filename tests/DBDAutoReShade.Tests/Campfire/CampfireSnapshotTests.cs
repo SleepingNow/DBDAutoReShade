@@ -72,7 +72,7 @@ public sealed class CampfireSnapshotTests
         }
 
         var checks = new StackPanel { Width = 380 };
-        checks.Children.Add(new CheckBox { Content = "Restore the Global preset when a match ends", IsChecked = true, Margin = new Thickness(0, 0, 0, 12) });
+        checks.Children.Add(new CheckBox { Content = "Start the next game with the Global preset", IsChecked = true, Margin = new Thickness(0, 0, 0, 12) });
         checks.Children.Add(new CheckBox { Content = "Play the Great skill-check sound when a map is found", Margin = new Thickness(0, 0, 0, 12) });
         checks.Children.Add(new CheckBox { Content = "Play animations (disabled)", IsChecked = true, IsEnabled = false, Margin = new Thickness(0, 0, 0, 12) });
         checks.Children.Add(new Slider { Minimum = 0, Maximum = 100, Value = 50, Width = 300, HorizontalAlignment = HorizontalAlignment.Left });
@@ -158,7 +158,6 @@ public sealed class CampfireSnapshotTests
         PlateScene lobbyCold = PlateScene.Lobby(FireState.Out, "No map detected yet", "Start Dead by Daylight, then press F8 on a loading screen.");
         PlateScene scanning = PlateScene.Lobby(FireState.Burning, "Looking for the map name", "Global / Menu stays on until a realm is read.");
         PlateScene map = PlateScene.Map("MacMillan Estate", "Coal Tower");
-        PlateScene restored = PlateScene.Lobby(FireState.Burning, "Global preset restored", "Last match: MacMillan Estate. Press F8 on the next loading screen.");
 
         PlateSheet("plate-catch", "waiting -> ready: the fire catches", lobbyCold, p => p.Scene = lobbyLit, new[] { 0, 150, 350, 600, 1000 });
         PlateSheet("plate-dieout", "ready -> waiting: the fire dies out", lobbyLit, p => p.Scene = lobbyCold, new[] { 0, 300, 700, 1200, 2000 });
@@ -166,8 +165,8 @@ public sealed class CampfireSnapshotTests
             p => { p.Scene = map; p.CaptionTag = WaitingTag(); }, new[] { 0, 150, 400, 700, 1000, 1400 });
         PlateSheet("plate-confirm", "preset confirmed: ember runs the frame, light swells", map,
             p => p.Confirm(), new[] { 0, 200, 450, 700, 950, 1400 }, p => p.Tone = PlateTone.Waiting);
-        PlateSheet("plate-sink", "match ended: the picture sinks into the fog, the clearing returns", map,
-            p => p.Scene = restored, new[] { 0, 250, 500, 750, 1100, 2100 }, p => p.Tone = PlateTone.Live);
+        PlateSheet("plate-sink", "back to Global (F9): the picture sinks into the fog, the clearing returns", map,
+            p => p.Scene = lobbyLit, new[] { 0, 250, 500, 750, 1100, 2100 }, p => p.Tone = PlateTone.Live);
         PlateSheet("plate-burndown", "scanning -> paused: the fire burns down, fog thickens", scanning,
             p => p.Scene = PlateScene.Lobby(FireState.Embers, "Scan paused", "Switch back to Dead by Daylight to resume."), new[] { 0, 200, 450, 900 });
         PlateSheet("plate-heartbeat", "waiting for focus: the heartbeat on the frame's glow (lub-dub, then rest)", map,
@@ -285,7 +284,6 @@ public sealed class CampfireSnapshotTests
 
         Capture("idle", "The Entity: idle and leaning in (scanning)", _ => { }, new[] { 0.0 });
         Capture("lean", "Lean in (900 ms ease-in-out)", l => l.Lean(true), new[] { 0.0, 450, 900 });
-        Capture("retract", "Match end: the yank up, a held beat, then back", l => l.Retract(), new[] { 0.0, 136, 250, 500, 1000, 2000 });
         Capture("rim", "Restart needed: a red rim light runs down the legs", l => l.RimRun(), new[] { 0.0, 300, 600, 900, 1300 });
         Capture("flex", "Confirmed: the flinch", l => l.Flex(), new[] { 0.0, 190, 400, 1000 });
     });

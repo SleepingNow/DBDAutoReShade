@@ -57,8 +57,16 @@ public sealed class AppConfig
     [JsonPropertyName("databaseUpdateManifestUrl")]
     public string? DatabaseUpdateManifestUrl { get; set; }
 
+    /// <summary>
+    /// "Start the next game with the Global preset": when Dead by Daylight
+    /// closes, the app sets the Global preset as ReShade's startup preset
+    /// (ReShade.ini <c>PresetPath</c>). Default on. It gates only that write.
+    /// The JSON name is older than the setting's meaning: up to 1.2.0 it also
+    /// restored Global when a match seemed to end (that detection was removed
+    /// in 1.2.1); the name is kept so existing configs keep their choice.
+    /// </summary>
     [JsonPropertyName("autoRestoreGlobalOnMenu")]
-    public bool AutoRestoreGlobalOnMenu { get; set; } = true;
+    public bool StartNextGameWithGlobal { get; set; } = true;
 
     /// <summary>
     /// The second global hotkey, "Switch to Global preset" (null = disabled).

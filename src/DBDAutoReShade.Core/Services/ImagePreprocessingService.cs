@@ -263,47 +263,6 @@ public static class ImagePreprocessingService
         return new CapturedImage(width, height, bgra);
     }
 
-    /// <summary>
-    /// Cheap perceptual hash input: 32x32 grayscale thumbnail used by the
-    /// lifecycle service to notice scene changes WITHOUT running OCR.
-    /// Luma is computed only at the 1024 sample points, straight from BGRA, so a
-    /// full frame never needs a frame-sized grayscale buffer.
-    /// </summary>
-    public static byte[] Thumbnail32(CapturedImage image)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        byte[] px = image.Pixels;
-        var thumb = new byte[32 * 32];
-        for (int y = 0; y < 32; y++)
-        {
-            int sy = y * image.Height / 32;
-            for (int x = 0; x < 32; x++)
-            {
-                int sx = x * image.Width / 32;
-                thumb[y * 32 + x] = Luma(px, (sy * image.Width + sx) * 4);
-            }
-        }
-
-        return thumb;
-    }
-
-    /// <summary>Mean absolute per-pixel difference between two thumbnails, 0..255.</summary>
-    public static double ThumbnailDistance(byte[] a, byte[] b)
-    {
-        if (a.Length != b.Length || a.Length == 0)
-        {
-            return double.MaxValue;
-        }
-
-        double sum = 0;
-        for (int i = 0; i < a.Length; i++)
-        {
-            sum += Math.Abs(a[i] - b[i]);
-        }
-
-        return sum / a.Length;
-    }
-
     /// <summary>ITU-R BT.601 luma of the BGRA pixel starting at <paramref name="offset"/>.</summary>
     private static byte Luma(byte[] bgra, int offset) =>
         (byte)((bgra[offset] * 114 + bgra[offset + 1] * 587 + bgra[offset + 2] * 299 + 500) / 1000);

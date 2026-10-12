@@ -68,22 +68,12 @@ internal sealed record ControllerHarnessOptions
 
     /// <summary>Hotkeys another program already holds when the app starts (registering one fails, for either hotkey).</summary>
     public IReadOnlyList<DetectionHotkeyConfig> HotkeysHeldElsewhere { get; init; } = Array.Empty<DetectionHotkeyConfig>();
-
-    /// <summary>Manually driven by default (huge poll interval): tests call PollOnce.</summary>
-    public LifecycleOptions Lifecycle { get; init; } = new(
-        PollIntervalMs: 3_600_000,
-        TrialTransitionDistance: 30,
-        TrialConfirmPolls: 3,
-        MenuTransitionDistance: 35,
-        MenuConfirmPolls: 4,
-        MinimumTrialSeconds: 0);
 }
 
 /// <summary>
 /// The real <see cref="AppController"/> wired to fakes: DBD monitor, both global
 /// hotkeys (nothing is registered with Windows), sound, key simulator, focus, OCR,
-/// capture (lifecycle frames by grey level), a manual monotonic clock and a
-/// manually polled lifecycle.
+/// capture (blank OCR regions, every capture counted) and a manual monotonic clock.
 /// </summary>
 internal sealed class ControllerHarness : IDisposable
 {
@@ -418,47 +408,18 @@ internal sealed class ControllerHarness : IDisposable
         }
     }
 
-    /// <summary>Full frames (lifecycle) are a flat grey <see cref="Level"/>; OCR regions are blank.</summary>
+    /// <summary>
+    /// OCR regions are blank. Every capture is counted: the only capture the app makes is
+    /// the scan's (the interface has no whole-frame capture any more).
+    /// </summary>
     internal sealed class FakeCapture : IWindowCaptureService
     {
-        private volatile int _level = 10;
-        private int _clientAreaCalls;
         private int _regionCalls;
-
-        public int Level
-        {
-            get => _level;
-            set => _level = value;
-        }
-
-        /// <summary>Flip between levels 10 and 200 on every full-frame capture (stress tests).</summary>
-        public bool Alternate { get; set; }
 
         public volatile bool ThrowOnRegions;
 
-        /// <summary>Runs inside every full-frame capture (lock-order probes).</summary>
-        public Action? OnClientAreaCapture { get; set; }
-
-        public int ClientAreaCalls => Volatile.Read(ref _clientAreaCalls);
-
-        /// <summary>OCR regions captured so far (detection scans).</summary>
+        /// <summary>Every capture so far (OCR regions of detection scans).</summary>
         public int RegionCalls => Volatile.Read(ref _regionCalls);
-
-        public CapturedImage? CaptureClientArea(IntPtr hwnd)
-        {
-            int call = Interlocked.Increment(ref _clientAreaCalls);
-            OnClientAreaCapture?.Invoke();
-            int level = Alternate ? (call % 2 == 0 ? 200 : 10) : Level;
-            const int size = 64;
-            var px = new byte[size * size * 4];
-            for (int i = 0; i < px.Length; i += 4)
-            {
-                px[i] = px[i + 1] = px[i + 2] = (byte)level;
-                px[i + 3] = 255;
-            }
-
-            return new CapturedImage(size, size, px);
-        }
 
         public CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region)
         {
@@ -499,8 +460,6 @@ internal sealed class ControllerHarness : IDisposable
     public FakeOcr Ocr { get; } = new();
 
     public FakeCapture Capture { get; } = new();
-
-    public MatchLifecycleService Lifecycle { get; private set; } = null!;
 
     public DetectionOrchestrator Detector { get; private set; } = null!;
 
@@ -617,10 +576,9 @@ internal sealed class ControllerHarness : IDisposable
             h.Ocr, new MapMatchingService(), db, h.Capture,
             new DetectionPolicy(TimeoutSeconds: 5, SampleIntervalMs: 25),
             _ => new DbdClientBounds(0, 0, 1920, 1080, 96));
-        h.Lifecycle = new MatchLifecycleService(h.Capture, options.Lifecycle, () => h.NowMs);
         var activator = new PresetActivationService(h.Keys, _ => h.Focused);
         h.Controller = new AppController(
-            configSvc, db, h.States, h.Dbd, h.Hotkey, h.Detector, h.Lifecycle, activator,
+            configSvc, db, h.States, h.Dbd, h.Hotkey, h.Detector, activator,
             new PresetDecisionService(), new ReshadeConfigurationService(),
             activationRetryInterval: options.RetryInterval, maxActivationAttempts: options.MaxAttempts,
             presetVerifyDelayMs: options.VerifyDelayMs,
@@ -690,28 +648,6 @@ internal sealed class ControllerHarness : IDisposable
             }
         };
 
-    /// <summary>Loading screen → gameplay as the lifecycle sees it (abrupt, sustained change).</summary>
-    public void DriveToTrial(int gameplayLevel = 200)
-    {
-        Capture.Level = gameplayLevel;
-        for (int i = 0; i < 3; i++)
-        {
-            Lifecycle.PollOnce();
-        }
-
-        Assert.Equal(LifecyclePhase.InTrial, Lifecycle.Phase);
-    }
-
-    /// <summary>Gameplay → menus (sustained change far from the gameplay reference).</summary>
-    public void DriveToMenus(int menuLevel = 40)
-    {
-        Capture.Level = menuLevel;
-        for (int i = 0; i < 4; i++)
-        {
-            Lifecycle.PollOnce();
-        }
-    }
-
     /// <summary>What ReShade does when it switches: save PresetPath to ReShade.ini.</summary>
     public void ReshadeSaves(string presetPath)
     {
@@ -753,7 +689,6 @@ internal sealed class ControllerHarness : IDisposable
         {
             Controller.Shutdown();
             Controller.Dispose();
-            Lifecycle.Dispose();
             Detector.Dispose();
             Hotkey.Dispose();
             GlobalPresetHotkey.Dispose();

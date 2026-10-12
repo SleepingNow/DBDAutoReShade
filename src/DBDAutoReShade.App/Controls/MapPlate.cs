@@ -890,7 +890,8 @@ public sealed class MapPlate : UserControl
         if (oldCaption is not null && oldCaption.IsLobby == !scene.IsMap && _captionLand is { } land && land.CurrentTime is { } now &&
             now.TotalMilliseconds < _captionLandAt)
         {
-            // the names have not landed yet (e.g. "Match ended" became "Global preset restored" while the map sinks):
+            // the names have not landed yet (e.g. "Press F8 on the loading screen." became "Global / Menu is on. …"
+            // while the map sinks after a switch to Global):
             // they land with the new words, on the moment's own beat
             oldCaption.Retitle(scene);
             return;

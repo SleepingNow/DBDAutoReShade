@@ -9,8 +9,8 @@ namespace DBDAutoReShade.App.Media;
 /// <list type="bullet">
 /// <item><see cref="ShouldAnimate"/> false: one-shot moments become instant (the end state is applied at once). That is
 /// the case whenever nobody can watch the window: animations off, the window minimized or hidden, or the window not the
-/// active one (in a match the game is in front: a map found, the click into the game and the match end change the
-/// screen at once, and no clock runs behind the game).</item>
+/// active one (in a match the game is in front: a map found, the click into the game and an F9 switch to Global change
+/// the screen at once, and no clock runs behind the game).</item>
 /// <item><see cref="ShouldRunAmbient"/> false: ambient loops (fog drift, flicker, embers, sway, heartbeat, the
 /// skill-check spin, the Test countdown's needle) stop and hold in place; they resume where they were when it turns
 /// true again.</item>

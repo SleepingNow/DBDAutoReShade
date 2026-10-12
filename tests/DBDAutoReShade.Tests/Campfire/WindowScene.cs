@@ -20,8 +20,8 @@ namespace DBDAutoReShade.Tests.Campfire;
 /// </summary>
 internal sealed class WindowScene : IDisposable
 {
-    /// <summary>The prototype's states (data.js), in its order.</summary>
-    public static readonly string[] States = { "waiting", "ready", "scanning", "waitingFocus", "active", "paused", "matchEnded", "restartNeeded" };
+    /// <summary>The prototype's states (data.js), in its order (its "matchEnded" is gone: 1.2.1 removed match-end detection).</summary>
+    public static readonly string[] States = { "waiting", "ready", "scanning", "waitingFocus", "active", "paused", "restartNeeded" };
 
     /// <summary>The owner's realm presets (data.js), Haddonfield without one.</summary>
     private static readonly (string Realm, string File)[] Presets =
@@ -132,7 +132,7 @@ internal sealed class WindowScene : IDisposable
             CampfireTestHost.Pump();
         }
 
-        scene.Drive(state, universal, realmFiles["MacMillan Estate"]);
+        scene.Drive(state, realmFiles["MacMillan Estate"]);
         return scene;
     }
 
@@ -197,7 +197,7 @@ internal sealed class WindowScene : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    private void Drive(string state, string universal, string macmillan)
+    private void Drive(string state, string macmillan)
     {
         ControllerHarness h = Harness;
         AppController c = h.Controller;
@@ -228,21 +228,11 @@ internal sealed class WindowScene : IDisposable
                 break;
 
             case "active":
-            case "matchEnded":
                 h.Ocr.Text = "COAL TOWER\nMACMILLAN ESTATE";
                 _ = Task.Run(() => c.TriggerDetectionAsync());
                 PumpUntil(() => h.States.State == AppState.PresetActive, "the preset switched");
                 h.ReshadeSaves(macmillan); // ReShade saves its new preset: the read-back confirms it
                 PumpUntil(() => c.IsActivePresetConfirmed && ViewModel.StatusScreen.State == ScreenState.Active, "confirmed by ReShade");
-                if (state == "matchEnded")
-                {
-                    h.DriveToTrial();
-                    h.DriveToMenus();
-                    PumpUntil(() => c.StatusMessage.StartsWith("Match ended", StringComparison.Ordinal) && h.States.State == AppState.Ready, "the match end");
-                    h.ReshadeSaves(universal);
-                    PumpUntil(() => c.StatusMessage.Contains("confirmed by ReShade", StringComparison.Ordinal), "the restore confirmed");
-                }
-
                 break;
 
             case "restartNeeded":

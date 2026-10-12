@@ -66,15 +66,11 @@ public sealed class DetectionOrchestratorTests : IDisposable
 
     private sealed class FakeCapture : IWindowCaptureService
     {
-        private int _clientAreaCalls;
-
         public CapturedImage? ImageToReturn { get; set; } = DummyImage();
 
         public ConcurrentQueue<IntPtr> Windows { get; } = new();
 
         public ConcurrentQueue<IntRegion> Regions { get; } = new();
-
-        public int ClientAreaCalls => Volatile.Read(ref _clientAreaCalls);
 
         /// <summary>Optional per-call failure: return true to make that region's capture fail (null).</summary>
         public Func<IntPtr, IntRegion, bool>? FailRegion { get; set; }
@@ -84,12 +80,6 @@ public sealed class DetectionOrchestratorTests : IDisposable
 
         public static CapturedImage DummyImage() =>
             new(800, 200, Enumerable.Repeat((byte)128, 800 * 200 * 4).ToArray());
-
-        public CapturedImage? CaptureClientArea(IntPtr hwnd)
-        {
-            Interlocked.Increment(ref _clientAreaCalls);
-            return ImageToReturn?.Clone();
-        }
 
         public CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region)
         {
@@ -255,8 +245,7 @@ public sealed class DetectionOrchestratorTests : IDisposable
         // No fresh frame was captured after the fact: only the two OCR regions, ever.
         IntRegion mapPx = DbdLoadingScreenRegions.ToPixels(DbdLoadingScreenRegions.MapName, 1920, 1080);
         IntRegion realmPx = DbdLoadingScreenRegions.ToPixels(DbdLoadingScreenRegions.RealmName, 1920, 1080);
-        Assert.All(capture.Regions, region => Assert.True(region == mapPx || region == realmPx));
-        Assert.Equal(0, capture.ClientAreaCalls);
+        Assert.All(capture.Regions, region => Assert.True(region == mapPx || region == realmPx)); // (no whole-frame capture exists)
     }
 
     [Fact]
@@ -677,7 +666,6 @@ public sealed class DetectionOrchestratorTests : IDisposable
         Assert.Equal(0, r.SampleCount); // nothing reached the aggregator
         Assert.Equal(0, ocr.Calls);
         Assert.Empty(capture.Regions);
-        Assert.Equal(0, capture.ClientAreaCalls);
         Assert.Equal(0, Volatile.Read(ref taken)); // no sample was taken
         Assert.Null(r.DebugCropPath); // no other window's pixels or text on disk
         Assert.Empty(r.DebugCropFiles);

@@ -12,7 +12,7 @@ namespace DBDAutoReShade.App;
 /// The main window's motion director: one orchestrated moment per state change across the whole window (a
 /// <see cref="StateMoment"/>, the prototype's <c>changeState</c> → <c>interrupt()</c> → <c>renderAll(from)</c>). Every
 /// part of the change is played inside it — the map plate (reveal, sink, swap, the fire catching, burning down or dying
-/// out, the ember confirm), the skill check, the Entity's legs (lean, flinch, yank, rim light), the campfire light behind
+/// out, the ember confirm), the skill check, the Entity's legs (lean, flinch, rim light), the campfire light behind
 /// everything, the hero and status texts' blur-bridged crossfades, the detection line, the glide of whatever the change
 /// moved, the banners — and the next change interrupts it as a whole: what is still playing eases back to its rest pose
 /// within <see cref="InterruptSettle"/> while the new moment starts. The Great is one moment too: the dial lands, and
@@ -43,7 +43,7 @@ public partial class MainWindow
     /// <paramref name="continuing"/> is the Great's moment: the change joins it at <paramref name="offset"/> (once the
     /// dial has lifted) instead. A <paramref name="quick"/> change is one the user made (the override on or off, the
     /// prototype's quickStatusMotion): it joins the current moment like a small update, interrupts nothing, and is told
-    /// as a quick swap: no reveal or sink, no swell of the light (a 220 ms fade), no flare, no flinch or yank.
+    /// as a quick swap: no reveal or sink, no swell of the light (a 220 ms fade), no flare, no flinch.
     /// </summary>
     private void ApplyScreen(StatusScreen next, bool animate, bool quick = false, StateMoment? continuing = null, TimeSpan offset = default)
     {
@@ -97,11 +97,6 @@ public partial class MainWindow
                 {
                     Backdrop.Flare(TimeSpan.FromMilliseconds(260), TimeSpan.FromMilliseconds(1200)); // the ember flares
                     Legs.Flex();
-                }
-
-                if (next.State == ScreenState.MatchEnded && previous.Plate.IsMap)
-                {
-                    Legs.Retract(); // the Entity takes the realm
                 }
 
                 if (beat && _shownTab == AppTab.Presets)

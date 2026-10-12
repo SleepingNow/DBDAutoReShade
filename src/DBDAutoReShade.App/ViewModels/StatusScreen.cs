@@ -33,11 +33,8 @@ public enum ScreenState
     /// <summary>A map was found; its preset waits for DBD focus.</summary>
     WaitingFocus,
 
-    /// <summary>The detected realm's preset is active.</summary>
+    /// <summary>The detected realm's preset is active (it stays until the user's next switch).</summary>
     Active,
-
-    /// <summary>The match ended (the Global preset was restored, or there is none).</summary>
-    MatchEnded,
 
     /// <summary>A manual override forces one realm's preset.</summary>
     Override,
