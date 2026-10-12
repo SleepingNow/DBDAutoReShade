@@ -22,8 +22,7 @@ preset for it. When the match ends you're back on your Global/Menu preset.
   is ever uploaded.
 
 ## The skill check
-While it scans, a skill check spins on the map plate, one turn for each read of the
-loading screen. When the map is read, the needle lands in the great zone, the **Great**
+While it scans, a skill check spins on the map plate. When the map is read, the needle lands in the great zone, the **Great**
 sound plays and the map comes out of the fog.
 
 ![Skill check: scanning, the Great hit, the map revealed](docs/screenshots/skill-check.png)
