@@ -40,18 +40,23 @@ public sealed class PresetDecisionService
     public PresetDecision DecideOnMatchEnd(AppConfig config) =>
         Global(config, "Match ended — Global preset.");
 
+    /// <summary>
+    /// Decide the preset for a manual override. The <see cref="PresetDecision.Reason"/> describes
+    /// only the target (e.g. "MacMillan Estate."); callers add their own "Manual override:" prefix,
+    /// so the reason never starts with it.
+    /// </summary>
     public PresetDecision DecideManualOverride(string? realmName, AppConfig config)
     {
         if (!string.IsNullOrWhiteSpace(realmName) &&
             config.RealmPresets.TryGetValue(realmName, out string? preset) &&
             !string.IsNullOrWhiteSpace(preset))
         {
-            return new PresetDecision(preset, false, $"Manual override: {realmName}.");
+            return new PresetDecision(preset, false, $"{realmName}.");
         }
 
         return Global(config, string.IsNullOrWhiteSpace(realmName)
-            ? "Manual override cleared — Global preset."
-            : $"Manual override: '{realmName}' is not configured — Global preset.");
+            ? "No realm selected — Global preset."
+            : $"'{realmName}' has no preset — Global preset.");
     }
 
     private static PresetDecision Global(AppConfig config, string reason) =>

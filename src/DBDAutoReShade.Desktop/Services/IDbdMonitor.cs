@@ -6,6 +6,12 @@ public sealed class DbdStatusEventArgs(bool running, IntPtr window, string? exeP
     public bool IsRunning { get; } = running;
     public IntPtr MainWindowHandle { get; } = window;
     public string? ExePath { get; } = exePath;
+
+    /// <summary>
+    /// PID of the DBD process this snapshot describes (null when not running).
+    /// A PID change while <see cref="IsRunning"/> stays true means DBD was
+    /// restarted between polls (a new process), not just a new window.
+    /// </summary>
     public int? ProcessId { get; } = processId;
 }
 
@@ -20,6 +26,10 @@ public interface IDbdMonitor : IDisposable
 
     int? ProcessId { get; }
 
+    /// <summary>
+    /// Raised when the running flag, the main window handle or the PID
+    /// changes. May fire on a background (timer) thread.
+    /// </summary>
     event EventHandler<DbdStatusEventArgs>? StatusChanged;
 
     void Start();

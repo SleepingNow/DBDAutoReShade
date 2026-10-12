@@ -68,6 +68,23 @@ public sealed class PresetDecisionTests
         Assert.True(d.IsGlobal);
     }
 
+    [Theory]
+    [InlineData("MacMillan Estate")]
+    [InlineData("Autohaven Wreckers")] // not configured → Global
+    [InlineData(null)] // cleared → Global
+    public void ManualOverride_ReasonNeverRepeatsTheCallersPrefix(string? realm)
+    {
+        // The controller shows "Manual override: {Reason}"; a Reason starting with the same
+        // words produced "Manual override: Manual override: …".
+        PresetDecision d = new PresetDecisionService().DecideManualOverride(realm, Config());
+        Assert.False(d.Reason.StartsWith("Manual override", StringComparison.OrdinalIgnoreCase), d.Reason);
+        Assert.False(string.IsNullOrWhiteSpace(d.Reason));
+        if (realm is not null)
+        {
+            Assert.Contains(realm, d.Reason);
+        }
+    }
+
     [Fact]
     public void ManualOverride_ClearsOnMatchEnd()
     {

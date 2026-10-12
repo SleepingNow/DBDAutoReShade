@@ -1,3 +1,5 @@
+using DBDAutoReShade.Core.Models;
+
 namespace DBDAutoReShade.Core.Services;
 
 /// <summary>How strongly a preset file passed validation.</summary>
@@ -21,8 +23,9 @@ public sealed record PresetValidationResult(bool IsValid, string Message, Preset
 
 /// <summary>
 /// Validates user-selected ReShade preset files: must exist, be a file,
-/// carry the .ini extension, and look like a ReShade preset. Tolerant by
-/// design — unusual but legitimate presets are not rejected.
+/// carry the .ini extension, be storable in ReShade.ini's comma-separated
+/// shortcut list, and look like a ReShade preset. Tolerant by design —
+/// unusual but legitimate presets are not rejected.
 /// </summary>
 public static class PresetValidationService
 {
@@ -45,27 +48,30 @@ public static class PresetValidationService
             return PresetValidationResult.Fail("The preset path is not valid.");
         }
 
+        // Before the extension check: a folder (even one named "x.ini") must get the folder message.
+        if (Directory.Exists(full))
+        {
+            return PresetValidationResult.Fail("The selected preset is a folder, not a file.");
+        }
+
         if (!string.Equals(Path.GetExtension(full), ".ini", StringComparison.OrdinalIgnoreCase))
         {
             return PresetValidationResult.Fail("ReShade presets must be .ini files.");
         }
 
+        // ReShade stores PresetShortcutPaths as a comma-separated list. A literal ',' has to be
+        // escaped as ",,", which any unescaped writer (or hand edit) turns into two entries that
+        // shift every shortcut after it, so the app does not accept such paths at all.
+        if (full.Contains(','))
+        {
+            return PresetValidationResult.Fail(
+                "The preset path contains a comma (','). ReShade stores preset shortcut paths as a " +
+                "comma-separated list, so this file cannot be used. Rename the file or folder to remove the comma.");
+        }
+
         if (!File.Exists(full))
         {
             return PresetValidationResult.Fail("The preset file does not exist.");
-        }
-
-        try
-        {
-            var info = new FileInfo(full);
-            if (info.Attributes.HasFlag(FileAttributes.Directory))
-            {
-                return PresetValidationResult.Fail("The selected preset is a folder, not a file.");
-            }
-        }
-        catch
-        {
-            return PresetValidationResult.Fail("The preset file cannot be accessed.");
         }
 
         string head;
@@ -98,8 +104,22 @@ public static class PresetValidationService
         return PresetValidationResult.Fail("The file does not look like a ReShade preset.");
     }
 
-    /// <summary>Normalize a preset path for duplicate comparison.</summary>
-    public static string NormalizePresetPath(string? path)
+    /// <summary>
+    /// Normalize a preset path for duplicate comparison. Relative paths are
+    /// resolved against the process working directory; use the
+    /// <see cref="NormalizePresetPath(string?, string?)"/> overload to resolve
+    /// them against a specific folder (e.g. the ReShade.ini folder).
+    /// </summary>
+    public static string NormalizePresetPath(string? path) => NormalizePresetPath(path, null);
+
+    /// <summary>
+    /// Normalize a preset path for comparison: trims whitespace/quotes, makes it
+    /// absolute and drops trailing separators. A relative path is resolved
+    /// against <paramref name="baseDirectory"/> when one is given (ReShade
+    /// resolves relative paths in ReShade.ini against the ini's own folder),
+    /// otherwise against the process working directory.
+    /// </summary>
+    public static string NormalizePresetPath(string? path, string? baseDirectory)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -108,7 +128,11 @@ public static class PresetValidationService
 
         try
         {
-            return Path.GetFullPath(path.Trim().Trim('"')).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string trimmed = path.Trim().Trim('"');
+            string full = string.IsNullOrWhiteSpace(baseDirectory) || Path.IsPathFullyQualified(trimmed)
+                ? Path.GetFullPath(trimmed)
+                : Path.GetFullPath(trimmed, Path.GetFullPath(baseDirectory.Trim().Trim('"')));
+            return full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
         catch
         {
@@ -118,7 +142,8 @@ public static class PresetValidationService
 
     /// <summary>
     /// Find a *different* realm already using this preset file, if any.
-    /// The Global preset is exempt: many realms intentionally fall back to it.
+    /// The Global preset is not considered here; use
+    /// <see cref="FindDuplicateAssignment"/> to include it.
     /// </summary>
     public static string? FindDuplicateRealm(
         string presetPath,
@@ -134,6 +159,55 @@ public static class PresetValidationService
         foreach (var kv in realmPresets)
         {
             if (string.Equals(kv.Key, forRealm, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (string.Equals(NormalizePresetPath(kv.Value), norm, StringComparison.OrdinalIgnoreCase))
+            {
+                return kv.Key;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Find another assignment (Global or a realm) that already uses this preset
+    /// file. Each assignment gets its own ReShade shortcut entry, so the same
+    /// file assigned twice yields two entries with the same path.
+    /// </summary>
+    /// <param name="presetPath">The file about to be assigned.</param>
+    /// <param name="excludingName">
+    /// The name being assigned: a realm name, or <see cref="AppConfigKeys.GlobalShortcutKey"/>
+    /// when assigning the Global preset. That name itself is never reported.
+    /// </param>
+    /// <param name="config">Current configuration (Global + realm presets).</param>
+    /// <returns>
+    /// The conflicting name — <see cref="AppConfigKeys.GlobalShortcutKey"/> for the Global
+    /// preset (see <see cref="AppConfigKeys.DisplayName"/>), otherwise the realm name — or null.
+    /// Realms are checked in ordinal order after Global, so the result is deterministic.
+    /// </returns>
+    public static string? FindDuplicateAssignment(string presetPath, string? excludingName, AppConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        string norm = NormalizePresetPath(presetPath);
+        if (norm.Length == 0)
+        {
+            return null;
+        }
+
+        if (!string.Equals(excludingName, AppConfigKeys.GlobalShortcutKey, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(config.GlobalPresetPath) &&
+            string.Equals(NormalizePresetPath(config.GlobalPresetPath), norm, StringComparison.OrdinalIgnoreCase))
+        {
+            return AppConfigKeys.GlobalShortcutKey;
+        }
+
+        foreach (var kv in config.RealmPresets.OrderBy(k => k.Key, StringComparer.Ordinal))
+        {
+            if (string.Equals(kv.Key, excludingName, StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(kv.Value))
             {
                 continue;
             }

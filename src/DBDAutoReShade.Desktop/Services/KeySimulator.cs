@@ -15,6 +15,11 @@ public interface IKeySimulator
 /// The combo is HELD briefly (down-phase, short sleep, up-phase in two SendInput
 /// batches): games and ReShade sample input per frame, and a down+up inside a
 /// single batch can fall between two polls and never be seen.
+/// <para>
+/// Never leaves a key stuck: whatever part of the down batch went out is
+/// always released (even when the down batch was cut short), and a short
+/// up batch is retried once for the keys that did not go out.
+/// </para>
 /// </summary>
 public sealed class SendInputKeySimulator : IKeySimulator
 {
@@ -26,31 +31,83 @@ public sealed class SendInputKeySimulator : IKeySimulator
     private const ushort VkShift = 0x10;
     private const ushort VkMenu = 0x12; // Alt
 
+    private readonly Func<NativeMethods.INPUT[], uint> _inject;
+    private readonly Action<int> _sleep;
+
+    public SendInputKeySimulator()
+        : this(SendInputNative, Thread.Sleep)
+    {
+    }
+
+    /// <summary>Test seam: <paramref name="inject"/> stands in for SendInput and returns how many events were inserted.</summary>
+    internal SendInputKeySimulator(Func<NativeMethods.INPUT[], uint> inject, Action<int>? sleep = null)
+    {
+        _inject = inject ?? throw new ArgumentNullException(nameof(inject));
+        _sleep = sleep ?? Thread.Sleep;
+    }
+
     public bool SendShortcut(ReshadeShortcutConfig shortcut) =>
         SendShortcut(shortcut, DefaultHoldMilliseconds);
 
+    /// <summary>
+    /// Presses and releases the combo. Returns false if any part failed (the
+    /// down batch was not fully inserted, or the release could not be
+    /// completed even after one retry).
+    /// </summary>
     public bool SendShortcut(ReshadeShortcutConfig shortcut, int holdMilliseconds)
     {
         ArgumentNullException.ThrowIfNull(shortcut);
-        BuildPress(shortcut, out NativeMethods.INPUT[] downs, out NativeMethods.INPUT[] ups);
-        if (!Send(downs))
+        BuildPress(shortcut, out NativeMethods.INPUT[] downs, out _);
+
+        int pressed = Inject(downs);
+        bool downOk = pressed == downs.Length;
+        if (downOk && holdMilliseconds > 0)
         {
-            return false;
+            _sleep(holdMilliseconds);
         }
 
-        if (holdMilliseconds > 0)
-        {
-            Thread.Sleep(holdMilliseconds);
-        }
-
-        return Send(ups);
+        // SendInput inserts events in order and stops at the first failure, so
+        // exactly the first `pressed` keys may be down: release those (all of
+        // them on success), even when the down batch failed part-way.
+        bool upOk = Release(BuildRelease(downs, pressed));
+        return downOk && upOk;
     }
 
-    private static bool Send(NativeMethods.INPUT[] inputs)
+    /// <summary>Sends the release batch; on a short count retries the keys that did not go out, once.</summary>
+    private bool Release(NativeMethods.INPUT[] ups)
     {
-        uint sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
-        return sent == inputs.Length;
+        if (ups.Length == 0)
+        {
+            return true;
+        }
+
+        int sent = Inject(ups);
+        if (sent == ups.Length)
+        {
+            return true;
+        }
+
+        NativeMethods.INPUT[] rest = ups[sent..];
+        return Inject(rest) == rest.Length;
     }
+
+    private int Inject(NativeMethods.INPUT[] inputs)
+    {
+        uint sent;
+        try
+        {
+            sent = _inject(inputs);
+        }
+        catch
+        {
+            sent = 0;
+        }
+
+        return (int)Math.Min(sent, (uint)inputs.Length);
+    }
+
+    private static uint SendInputNative(NativeMethods.INPUT[] inputs) =>
+        NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
 
     /// <summary>Pure press builder (unit-testable without touching global input).</summary>
     public static void BuildPress(
@@ -82,17 +139,25 @@ public sealed class SendInputKeySimulator : IKeySimulator
 
         downList.Add(KeyInput((ushort)shortcut.VirtualKey, keyUp: false));
 
-        var upList = new List<NativeMethods.INPUT>(mods.Count + 1)
+        downs = downList.ToArray();
+        ups = BuildRelease(downs, downs.Length);
+    }
+
+    /// <summary>
+    /// Pure release builder: key-ups for the first <paramref name="pressedCount"/>
+    /// entries of <paramref name="downs"/>, in reverse order (main key first,
+    /// then modifiers). Empty when nothing was pressed.
+    /// </summary>
+    internal static NativeMethods.INPUT[] BuildRelease(IReadOnlyList<NativeMethods.INPUT> downs, int pressedCount)
+    {
+        int count = Math.Clamp(pressedCount, 0, downs.Count);
+        var ups = new NativeMethods.INPUT[count];
+        for (int i = 0; i < count; i++)
         {
-            KeyInput((ushort)shortcut.VirtualKey, keyUp: true)
-        };
-        for (int i = mods.Count - 1; i >= 0; i--)
-        {
-            upList.Add(KeyInput(mods[i], keyUp: true));
+            ups[i] = KeyInput(downs[count - 1 - i].u.ki.wVk, keyUp: true);
         }
 
-        downs = downList.ToArray();
-        ups = upList.ToArray();
+        return ups;
     }
 
     private static NativeMethods.INPUT KeyInput(ushort vk, bool keyUp) => new()

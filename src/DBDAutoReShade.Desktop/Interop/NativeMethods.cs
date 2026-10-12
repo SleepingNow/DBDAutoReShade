@@ -1,10 +1,12 @@
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace DBDAutoReShade.Desktop.Interop;
 
 /// <summary>Window message IDs we care about.</summary>
 internal static class WinMsg
 {
+    public const int WmQuit = 0x0012;
     public const int WmHotkey = 0x0312;
 }
 
@@ -15,9 +17,13 @@ public static class NativeMethods
     public const uint DIB_RGB_COLORS = 0;
     public const uint BI_RGB = 0;
     public const uint PW_CLIENTONLY = 0x00000001;
+    public const uint PW_RENDERFULLCONTENT = 0x00000002;
 
     public const uint INPUT_KEYBOARD = 1;
     public const uint KEYEVENTF_KEYUP = 0x0002;
+
+    /// <summary>PeekMessage flag: look without removing (used to force a thread's message queue into existence).</summary>
+    public const uint PM_NOREMOVE = 0x0000;
 
     public static readonly IntPtr HWND_MESSAGE = new(-3);
 
@@ -139,6 +145,26 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hWnd);
 
+    /// <summary>GetAncestor flag: the top-level window (walks the parent chain, not owners).</summary>
+    public const uint GA_ROOT = 2;
+
+    /// <summary>DwmGetWindowAttribute: non-zero while DWM hides the window (e.g. on another virtual desktop).</summary>
+    public const int DWMWA_CLOAKED = 14;
+
+    /// <summary>
+    /// The window under a screen point, as the mouse hit-tests it: hidden
+    /// windows and click-through (layered + transparent) windows are skipped,
+    /// and windows of other threads are not sent any message.
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
     // --- Capture ---
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -172,6 +198,10 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
 
+    /// <summary>Flushes the calling thread's batched GDI operations (call after BitBlt before reading DIB bits).</summary>
+    [DllImport("gdi32.dll")]
+    public static extern bool GdiFlush();
+
     // --- Global hotkeys (thread queue, no window handle needed) ---
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -184,6 +214,9 @@ public static class NativeMethods
     public static extern int GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 
     [DllImport("user32.dll")]
+    public static extern bool PeekMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool PostThreadMessage(uint idThread, uint msg, UIntPtr wParam, IntPtr lParam);
 
     [DllImport("kernel32.dll")]
@@ -197,11 +230,21 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
-    // --- Integrity levels (process token metadata only; never game memory) ---
+    // --- Process metadata (query-limited access only; never game memory) ---
+    // PROCESS_QUERY_LIMITED_INFORMATION is the ONLY process access right this app
+    // requests. Never add PROCESS_VM_READ (or use Process.MainModule/Modules,
+    // which open the process with it): that would be memory-read access.
 
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     public const uint TOKEN_QUERY = 0x0008;
     public const int TokenIntegrityLevel = 25;
+
+    /// <summary>GetExitCodeProcess value while the process is still running.</summary>
+    public const uint STILL_ACTIVE = 259;
+
+    public const int ERROR_INVALID_PARAMETER = 87;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
+    public const int ERROR_HOTKEY_ALREADY_REGISTERED = 1409;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct SID_AND_ATTRIBUTES
@@ -216,15 +259,27 @@ public static class NativeMethods
         public SID_AND_ATTRIBUTES Label;
     }
 
+    /// <summary>
+    /// Opens a process handle (callers pass <see cref="PROCESS_QUERY_LIMITED_INFORMATION"/>
+    /// only). The SafeHandle closes it via CloseHandle; check <c>IsInvalid</c> for failure.
+    /// </summary>
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+    public static extern SafeProcessHandle OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    /// <summary>Full Win32 image path of a process; needs only PROCESS_QUERY_LIMITED_INFORMATION.</summary>
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool QueryFullProcessImageName(
+        SafeProcessHandle hProcess, uint dwFlags, [Out] char[] lpExeName, ref uint lpdwSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetExitCodeProcess(SafeProcessHandle hProcess, out uint lpExitCode);
 
     [DllImport("advapi32.dll", SetLastError = true)]
-    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+    public static extern bool OpenProcessToken(SafeProcessHandle processHandle, uint desiredAccess, out SafeAccessTokenHandle tokenHandle);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     public static extern bool GetTokenInformation(
-        IntPtr tokenHandle, int tokenInformationClass,
+        SafeAccessTokenHandle tokenHandle, int tokenInformationClass,
         IntPtr tokenInformation, uint tokenInformationLength, out uint returnLength);
 
     [DllImport("advapi32.dll")]

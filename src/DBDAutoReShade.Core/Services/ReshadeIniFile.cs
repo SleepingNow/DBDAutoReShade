@@ -1,65 +1,102 @@
 namespace DBDAutoReShade.Core.Services;
 
 /// <summary>
-/// Minimal INI document that preserves comments, blank lines, ordering and
-/// original casing when ReShade.ini is edited. ReShade-specific knowledge
-/// (which keys matter) lives in <see cref="ReshadeConfigurationService"/>.
+/// Minimal INI document that round-trips ReShade.ini byte-for-byte: comments,
+/// blank lines, ordering, casing, spacing around '=', each line's own newline
+/// sequence (CRLF/LF/CR), a leading BOM character and the presence or absence
+/// of a final newline are all preserved. Only lines whose value actually
+/// changes are re-serialized, and then only the value part of the line.
+/// ReShade-specific knowledge (which keys matter) lives in
+/// <see cref="ReshadeConfigurationService"/>.
 /// </summary>
 public sealed class IniDocument
 {
+    private const char ByteOrderMark = '\uFEFF';
+
     private readonly List<IniLine> _lines = new();
+
+    /// <summary>Leading U+FEFF (if the text had one), re-emitted verbatim.</summary>
+    private string _prefix = string.Empty;
+
+    /// <summary>Newline used for lines this document adds: the text's first newline, else the platform default.</summary>
+    private string _newline = Environment.NewLine;
 
     public IReadOnlyList<IniLine> Lines => _lines;
 
     public static IniDocument Parse(string content)
     {
         var doc = new IniDocument();
-        string[] rawLines = (content ?? string.Empty).Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
-        foreach (string raw in rawLines)
+        string text = content ?? string.Empty;
+        int pos = 0;
+        if (text.Length > 0 && text[0] == ByteOrderMark)
         {
-            string trimmed = raw.Trim();
-            if (trimmed.Length == 0)
+            doc._prefix = ByteOrderMark.ToString();
+            pos = 1;
+        }
+
+        string? firstNewline = null;
+        string section = string.Empty;
+        while (pos < text.Length)
+        {
+            int nl = text.IndexOfAny(new[] { '\r', '\n' }, pos);
+            string raw;
+            string ending;
+            if (nl < 0)
             {
-                doc._lines.Add(new IniLine(IniLineKind.Blank, raw, string.Empty, string.Empty, string.Empty));
-            }
-            else if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
-            {
-                doc._lines.Add(new IniLine(IniLineKind.Comment, raw, string.Empty, string.Empty, string.Empty));
-            }
-            else if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
-            {
-                doc._lines.Add(new IniLine(IniLineKind.Section, raw, trimmed.Substring(1, trimmed.Length - 2).Trim(), string.Empty, string.Empty));
+                raw = text.Substring(pos);
+                ending = string.Empty;
+                pos = text.Length;
             }
             else
             {
-                int eq = raw.IndexOf('=');
-                if (eq < 0)
-                {
-                    doc._lines.Add(new IniLine(IniLineKind.Comment, raw, string.Empty, string.Empty, string.Empty));
-                }
-                else
-                {
-                    string key = raw.Substring(0, eq).Trim();
-                    string value = raw.Substring(eq + 1).Trim();
-                    doc._lines.Add(new IniLine(IniLineKind.KeyValue, raw, CurrentSection(doc), key, value));
-                }
+                raw = text.Substring(pos, nl - pos);
+                ending = text[nl] == '\r' && nl + 1 < text.Length && text[nl + 1] == '\n'
+                    ? "\r\n"
+                    : text[nl].ToString();
+                pos = nl + ending.Length;
+                firstNewline ??= ending;
             }
+
+            IniLine line = Classify(raw, section) with { LineEnding = ending };
+            if (line.Kind == IniLineKind.Section)
+            {
+                section = line.Section;
+            }
+
+            doc._lines.Add(line);
         }
 
+        doc._newline = firstNewline ?? Environment.NewLine;
         return doc;
     }
 
-    private static string CurrentSection(IniDocument doc)
+    private static IniLine Classify(string raw, string currentSection)
     {
-        for (int i = doc._lines.Count - 1; i >= 0; i--)
+        string trimmed = raw.Trim();
+        if (trimmed.Length == 0)
         {
-            if (doc._lines[i].Kind == IniLineKind.Section)
-            {
-                return doc._lines[i].Section;
-            }
+            return new IniLine(IniLineKind.Blank, raw, string.Empty, string.Empty, string.Empty);
         }
 
-        return string.Empty;
+        if (trimmed.StartsWith(';') || trimmed.StartsWith('#'))
+        {
+            return new IniLine(IniLineKind.Comment, raw, string.Empty, string.Empty, string.Empty);
+        }
+
+        if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+        {
+            return new IniLine(IniLineKind.Section, raw, trimmed.Substring(1, trimmed.Length - 2).Trim(), string.Empty, string.Empty);
+        }
+
+        int eq = raw.IndexOf('=');
+        if (eq < 0)
+        {
+            return new IniLine(IniLineKind.Comment, raw, string.Empty, string.Empty, string.Empty);
+        }
+
+        string key = raw.Substring(0, eq).Trim();
+        string value = raw.Substring(eq + 1).Trim();
+        return new IniLine(IniLineKind.KeyValue, raw, currentSection, key, value);
     }
 
     public string? GetValue(string section, string key)
@@ -77,7 +114,11 @@ public sealed class IniDocument
         return null;
     }
 
-    /// <summary>Set a key, preserving position; creates the section/key if missing. Returns true if changed.</summary>
+    /// <summary>
+    /// Set a key, preserving position; creates the section/key if missing. Returns true if changed.
+    /// An existing line keeps its key text, spacing around '=', trailing whitespace and newline;
+    /// only the value text is replaced.
+    /// </summary>
     public bool SetValue(string section, string key, string value)
     {
         for (int i = 0; i < _lines.Count; i++)
@@ -92,7 +133,7 @@ public sealed class IniDocument
                     return false;
                 }
 
-                _lines[i] = line with { Value = value, Raw = $"{line.Key}={value}" };
+                _lines[i] = line with { Value = value, Raw = ReplaceValueText(line.Raw, value) };
                 return true;
             }
         }
@@ -113,11 +154,11 @@ public sealed class IniDocument
             if (_lines.Count > 0 &&
                 !(_lines[^1].Kind == IniLineKind.Blank))
             {
-                _lines.Add(new IniLine(IniLineKind.Blank, string.Empty, string.Empty, string.Empty, string.Empty));
+                InsertLine(_lines.Count, new IniLine(IniLineKind.Blank, string.Empty, string.Empty, string.Empty, string.Empty));
             }
 
-            _lines.Add(new IniLine(IniLineKind.Section, $"[{section}]", section, string.Empty, string.Empty));
-            _lines.Add(entry);
+            InsertLine(_lines.Count, new IniLine(IniLineKind.Section, $"[{section}]", section, string.Empty, string.Empty));
+            InsertLine(_lines.Count, entry);
         }
         else
         {
@@ -127,18 +168,59 @@ public sealed class IniDocument
                 insert++;
             }
 
-            _lines.Insert(insert, entry);
+            InsertLine(insert, entry);
         }
 
         return true;
     }
 
+    /// <summary>
+    /// Insert a new line. Appending after a last line that has no newline gives
+    /// that line the document newline and leaves the new last line without one,
+    /// so the "ends with a newline" property of the original text is kept.
+    /// </summary>
+    private void InsertLine(int index, IniLine line)
+    {
+        if (index >= _lines.Count && _lines.Count > 0 && _lines[^1].LineEnding.Length == 0)
+        {
+            _lines[^1] = _lines[^1] with { LineEnding = _newline };
+            _lines.Add(line with { LineEnding = string.Empty });
+            return;
+        }
+
+        _lines.Insert(Math.Min(index, _lines.Count), line with { LineEnding = _newline });
+    }
+
+    /// <summary>Replace only the (trimmed) value span of a raw "key = value" line.</summary>
+    private static string ReplaceValueText(string raw, string value)
+    {
+        int eq = raw.IndexOf('=');
+        if (eq < 0)
+        {
+            return raw + "=" + value;
+        }
+
+        int start = eq + 1;
+        while (start < raw.Length && char.IsWhiteSpace(raw[start]))
+        {
+            start++;
+        }
+
+        int end = raw.Length;
+        while (end > start && char.IsWhiteSpace(raw[end - 1]))
+        {
+            end--;
+        }
+
+        return string.Concat(raw.AsSpan(0, start), value, raw.AsSpan(end));
+    }
+
     public override string ToString()
     {
-        var sb = new System.Text.StringBuilder();
+        var sb = new System.Text.StringBuilder(_prefix);
         foreach (IniLine line in _lines)
         {
-            sb.AppendLine(line.Kind == IniLineKind.KeyValue ? $"{line.Key}={line.Value}" : line.Raw);
+            sb.Append(line.Raw).Append(line.LineEnding);
         }
 
         return sb.ToString();
@@ -152,5 +234,9 @@ public sealed class IniDocument
         KeyValue
     }
 
-    public sealed record IniLine(IniLineKind Kind, string Raw, string Section, string Key, string Value);
+    public sealed record IniLine(IniLineKind Kind, string Raw, string Section, string Key, string Value)
+    {
+        /// <summary>The newline that terminated this line in the source text ("" for a final line without one).</summary>
+        internal string LineEnding { get; init; } = string.Empty;
+    }
 }

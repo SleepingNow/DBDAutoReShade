@@ -1,12 +1,19 @@
+using DBDAutoReShade.Core.Services;
+
 namespace DBDAutoReShade.Desktop.Services;
 
 /// <summary>Where ReShade was found for a DBD install.</summary>
 public sealed record ReshadeLocation(string IniPath, string? HookDllPath, string GameDirectory);
 
 /// <summary>
-/// Locates ReShade for a DBD install: ReShade.ini next to (or just above)
-/// the game executable plus the hook DLL (dxgi.dll / d3d11.dll / d3d12.dll).
-/// Filesystem only — never touches the game process.
+/// Locates ReShade for a DBD install: ReShade.ini in one of
+/// <see cref="ReshadeSearchLocations.CandidateDirectories"/> (next to or just
+/// above the game executable, or the game's Binaries\Win64 / WinGDK folder when
+/// the configured executable is the launcher) plus the hook DLL
+/// (dxgi.dll / d3d11.dll / d3d12.dll) next to it. A ReShade.ini with a hook DLL
+/// beside it wins over one without (a stray copy next to the launcher), nearest
+/// first; without any hook DLL the nearest ReShade.ini is used. Filesystem only —
+/// never touches the game process.
 /// </summary>
 public static class ReshadeDiscoveryService
 {
@@ -14,26 +21,21 @@ public static class ReshadeDiscoveryService
 
     public static ReshadeLocation? Discover(string? dbdExePath)
     {
-        if (string.IsNullOrWhiteSpace(dbdExePath))
+        ReshadeLocation? firstWithoutHook = null;
+        foreach (string ini in ReshadeSearchLocations.FindIniFiles(dbdExePath))
         {
-            return null;
-        }
-
-        string? dir = Path.GetDirectoryName(dbdExePath);
-        for (int level = 0; level < 4 && dir is not null; level++)
-        {
-            string ini = Path.Combine(dir, "ReShade.ini");
-            if (File.Exists(ini))
+            string dir = Path.GetDirectoryName(ini)!;
+            string? dll = HookDllNames
+                .Select(n => Path.Combine(dir, n))
+                .FirstOrDefault(File.Exists);
+            if (dll is not null)
             {
-                string? dll = HookDllNames
-                    .Select(n => Path.Combine(dir, n))
-                    .FirstOrDefault(File.Exists);
                 return new ReshadeLocation(ini, dll, dir);
             }
 
-            dir = Path.GetDirectoryName(dir);
+            firstWithoutHook ??= new ReshadeLocation(ini, null, dir);
         }
 
-        return null;
+        return firstWithoutHook;
     }
 }

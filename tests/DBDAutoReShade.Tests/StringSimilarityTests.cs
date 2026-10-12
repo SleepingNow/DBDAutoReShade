@@ -39,4 +39,19 @@ public sealed class StringSimilarityTests
     {
         Assert.Equal(1.0, StringSimilarity.Similarity("", ""));
     }
+
+    [Fact]
+    public void NearIdenticalMapNames_MaxScoreGapIsBelowTheDefaultMargin()
+    {
+        // Why the ambiguity margin must adapt: no read can put more than the names' own
+        // distance (2/37 ≈ 0.054) between the two wings, which is less than 0.06.
+        const string east = "RACCOON CITY POLICE STATION EAST WING";
+        const string west = "RACCOON CITY POLICE STATION WEST WING";
+        double nameGap = 1.0 - StringSimilarity.Similarity(east, west);
+        Assert.Equal(2.0 / 37, nameGap, 10);
+        Assert.True(nameGap < new MapMatchingService().AmbiguityMargin);
+
+        double exactReadGap = StringSimilarity.BestSimilarity(east, east) - StringSimilarity.BestSimilarity(east, west);
+        Assert.Equal(nameGap, exactReadGap, 10);
+    }
 }

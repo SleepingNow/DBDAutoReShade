@@ -15,6 +15,11 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
         PreviewKeyDown += OnPreviewKeyDown;
+
+        // Capture mode pauses the global hotkey: never leave it paused once the
+        // window can't receive the key any more.
+        Deactivated += (_, _) => _viewModel.CancelHotkeyCapture();
+        Closed += (_, _) => _viewModel.CancelHotkeyCapture();
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -24,7 +29,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        e.Handled = true;
+        e.Handled = true; // Esc included: the view model treats it as "cancel"
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         // Ignore bare modifier presses.
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift

@@ -61,6 +61,23 @@ public sealed class RuntimeStateTests
     }
 
     [Fact]
+    public void Error_IsNotSticky()
+    {
+        var states = new RuntimeStateService();
+        states.ResetTo(AppState.Error);
+        Assert.True(states.TryTransitionTo(AppState.DetectingLoadingScreen)); // the hotkey starts a fresh scan
+
+        states.ResetTo(AppState.Error);
+        Assert.True(states.TryTransitionTo(AppState.ManualOverride));
+
+        states.ResetTo(AppState.Error);
+        Assert.True(states.TryTransitionTo(AppState.Ready)); // DBD (re)detected
+
+        states.ResetTo(AppState.Error);
+        Assert.False(states.TryTransitionTo(AppState.PresetActive)); // still guarded
+    }
+
+    [Fact]
     public void StateChanged_EventFires()
     {
         var states = new RuntimeStateService();

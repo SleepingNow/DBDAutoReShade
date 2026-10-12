@@ -7,14 +7,38 @@ namespace DBDAutoReShade.Core.Services;
 /// <summary>
 /// Loads and validates the built-in (or updated) map → realm database.
 /// Ship default is an embedded resource; an updater-provided copy in AppData
-/// takes precedence once validated. Never hard-codes giant switch statements.
+/// takes precedence once validated, but only while it is at least as new as
+/// the built-in one (an app upgrade can ship a newer built-in database).
+/// A bad or unreadable override never breaks loading: the built-in database
+/// is used and the reason is exposed in <see cref="LastLoadWarning"/>.
+/// Never hard-codes giant switch statements.
 /// </summary>
 public sealed class RealmDatabaseService
 {
     public const int SupportedSchemaVersion = 1;
     private const string EmbeddedResourceName = "DBDAutoReShade.Core.RealmData.mapDatabase.json";
 
-    private MapDatabaseFile? _database;
+    private readonly string? _builtInJson;
+
+    // Swapped atomically by LoadAsync (an update can reload while detection reads Realms).
+    private volatile MapDatabaseFile? _database;
+    private volatile string? _lastLoadWarning;
+    private volatile bool _loadedFromOverride;
+
+    /// <summary>Uses the database embedded in this assembly as the built-in baseline.</summary>
+    public RealmDatabaseService()
+        : this(builtInJson: null)
+    {
+    }
+
+    /// <summary>
+    /// Uses <paramref name="builtInJson"/> as the built-in baseline instead of the embedded
+    /// resource (tests and tooling). Null means "use the embedded resource".
+    /// </summary>
+    public RealmDatabaseService(string? builtInJson)
+    {
+        _builtInJson = builtInJson;
+    }
 
     public IReadOnlyList<RealmEntry> Realms => (IReadOnlyList<RealmEntry>?)_database?.Realms ?? Array.Empty<RealmEntry>();
 
@@ -22,44 +46,88 @@ public sealed class RealmDatabaseService
 
     public bool IsLoaded => _database is not null;
 
-    /// <summary>Load embedded default, optionally overridden by a validated file on disk.</summary>
+    /// <summary>
+    /// Why the override file passed to the last <see cref="LoadAsync"/> was not used
+    /// (unreadable or invalid), or null when there was nothing to report.
+    /// An override that is merely older than the built-in database is not a warning.
+    /// </summary>
+    public string? LastLoadWarning => _lastLoadWarning;
+
+    /// <summary>True when the last <see cref="LoadAsync"/> used the override file rather than the built-in database.</summary>
+    public bool LoadedFromOverride => _loadedFromOverride;
+
+    /// <summary>
+    /// Load the built-in database, optionally overridden by a validated file on disk.
+    /// The override is used only when its version is ≥ the built-in version.
+    /// Never throws because of a bad or unreadable override file; only a broken
+    /// built-in database (a build defect) or cancellation throws.
+    /// </summary>
     public async Task LoadAsync(string? overridePath = null, CancellationToken ct = default)
     {
+        MapDatabaseFile builtIn = await LoadBuiltInAsync(ct).ConfigureAwait(false);
+
         MapDatabaseFile? fromDisk = null;
+        string? warning = null;
         if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
         {
-            string json = await File.ReadAllTextAsync(overridePath, ct).ConfigureAwait(false);
-            if (TryParse(json, out var parsed, out _))
+            string? json = null;
+            try
             {
-                fromDisk = parsed;
+                json = await File.ReadAllTextAsync(overridePath, ct).ConfigureAwait(false);
             }
-            // Corrupt override files are ignored here (updater keeps last-known-good);
-            // the embedded default still loads below.
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                warning = $"Could not read the downloaded map database '{overridePath}' ({ex.Message}); using the built-in database.";
+            }
+
+            if (json is not null)
+            {
+                if (!TryParse(json, out MapDatabaseFile? parsed, out string? error))
+                {
+                    // Corrupt override files are ignored here (updater keeps last-known-good).
+                    warning = $"The downloaded map database '{overridePath}' is invalid ({error}); using the built-in database.";
+                }
+                else if (parsed!.Version >= builtIn.Version)
+                {
+                    fromDisk = parsed;
+                }
+                // An older override (e.g. after an app upgrade) is silently shadowed by the newer built-in one.
+            }
         }
 
-        if (fromDisk is not null)
-        {
-            _database = fromDisk;
-            return;
-        }
-
-        using Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(EmbeddedResourceName);
-        if (stream is null)
-        {
-            throw new InvalidOperationException($"Embedded database resource '{EmbeddedResourceName}' not found.");
-        }
-
-        using var reader = new StreamReader(stream);
-        string embedded = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
-        if (!TryParse(embedded, out var db, out string? error))
-        {
-            throw new InvalidOperationException($"Embedded map database is invalid: {error}");
-        }
-
-        _database = db;
+        _lastLoadWarning = warning;
+        _loadedFromOverride = fromDisk is not null;
+        _database = fromDisk ?? builtIn;
     }
 
-    /// <summary>Validate + parse database JSON without throwing.</summary>
+    private async Task<MapDatabaseFile> LoadBuiltInAsync(CancellationToken ct)
+    {
+        string json;
+        if (_builtInJson is not null)
+        {
+            json = _builtInJson;
+        }
+        else
+        {
+            using Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(EmbeddedResourceName);
+            if (stream is null)
+            {
+                throw new InvalidOperationException($"Embedded database resource '{EmbeddedResourceName}' not found.");
+            }
+
+            using var reader = new StreamReader(stream);
+            json = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        }
+
+        if (!TryParse(json, out MapDatabaseFile? db, out string? error))
+        {
+            throw new InvalidOperationException($"Built-in map database is invalid: {error}");
+        }
+
+        return db!;
+    }
+
+    /// <summary>Validate + parse database JSON without throwing. A leading UTF-8 BOM (U+FEFF) is ignored.</summary>
     public static bool TryParse(string? json, out MapDatabaseFile? database, out string? error)
     {
         database = null;
@@ -68,6 +136,12 @@ public sealed class RealmDatabaseService
         {
             error = "Database JSON is empty.";
             return false;
+        }
+
+        // Encoding.UTF8.GetString keeps the byte-order mark as U+FEFF, which the JSON parser rejects.
+        if (json[0] == '﻿')
+        {
+            json = json[1..];
         }
 
         MapDatabaseFile? parsed;
@@ -90,6 +164,10 @@ public sealed class RealmDatabaseService
         return TryValidate(parsed, out database, out error);
     }
 
+    /// <summary>
+    /// Validate a deserialized database without throwing. Rejects null realm entries,
+    /// null/blank realm or map names, null map lists and duplicates.
+    /// </summary>
     public static bool TryValidate(MapDatabaseFile? parsed, out MapDatabaseFile? database, out string? error)
     {
         database = null;
@@ -120,11 +198,19 @@ public sealed class RealmDatabaseService
 
         var seenRealms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenMaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (RealmEntry realm in parsed.Realms)
+        for (int i = 0; i < parsed.Realms.Count; i++)
         {
+            // JSON can carry nulls where the model says non-null ("realms": [null], "name": null, "maps": null).
+            RealmEntry? realm = parsed.Realms[i];
+            if (realm is null)
+            {
+                error = $"Realm entry #{i + 1} is null.";
+                return false;
+            }
+
             if (string.IsNullOrWhiteSpace(realm.Name))
             {
-                error = "A realm has an empty name.";
+                error = $"Realm entry #{i + 1} has an empty name.";
                 return false;
             }
 
@@ -141,7 +227,7 @@ public sealed class RealmDatabaseService
                 return false;
             }
 
-            foreach (string map in realm.Maps)
+            foreach (string? map in realm.Maps)
             {
                 if (string.IsNullOrWhiteSpace(map))
                 {
@@ -150,6 +236,12 @@ public sealed class RealmDatabaseService
                 }
 
                 string normMap = TextNormalizationService.Normalize(map);
+                if (normMap.Length == 0)
+                {
+                    error = $"Realm '{realm.Name}' contains a map name without letters or digits: '{map}'.";
+                    return false;
+                }
+
                 if (seenMaps.TryGetValue(normMap, out string? otherRealm))
                 {
                     error = $"Map '{map}' appears in both '{otherRealm}' and '{realm.Name}'.";
@@ -167,13 +259,14 @@ public sealed class RealmDatabaseService
     /// <summary>Exact (normalized) lookup of a map name → realm. Fuzzy matching lives in <see cref="MapMatchingService"/>.</summary>
     public string? FindRealmForMap(string? mapName)
     {
-        if (_database is null || string.IsNullOrWhiteSpace(mapName))
+        MapDatabaseFile? database = _database;
+        if (database is null || string.IsNullOrWhiteSpace(mapName))
         {
             return null;
         }
 
         string norm = TextNormalizationService.Normalize(mapName);
-        foreach (RealmEntry realm in _database.Realms)
+        foreach (RealmEntry realm in database.Realms)
         {
             foreach (string map in realm.Maps)
             {
@@ -190,13 +283,14 @@ public sealed class RealmDatabaseService
     public bool TryGetRealm(string? realmName, out RealmEntry? realm)
     {
         realm = null;
-        if (_database is null || string.IsNullOrWhiteSpace(realmName))
+        MapDatabaseFile? database = _database;
+        if (database is null || string.IsNullOrWhiteSpace(realmName))
         {
             return false;
         }
 
         string norm = TextNormalizationService.Normalize(realmName);
-        foreach (RealmEntry r in _database.Realms)
+        foreach (RealmEntry r in database.Realms)
         {
             if (TextNormalizationService.Normalize(r.Name) == norm)
             {

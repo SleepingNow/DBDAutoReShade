@@ -48,7 +48,10 @@ public sealed class DiscoveryAndBmpTests : IDisposable
     public void ReshadeDiscovery_ReturnsNull_WhenAbsent()
     {
         Assert.Null(ReshadeDiscoveryService.Discover(null));
-        Assert.Null(ReshadeDiscoveryService.Discover(Path.Combine(_dir, "nothing.exe")));
+
+        // Nested so the exe folder and all 3 scanned parents stay inside this test's folder: the
+        // result must not depend on a ReShade.ini somewhere under %TEMP% or %LOCALAPPDATA%.
+        Assert.Null(ReshadeDiscoveryService.Discover(Path.Combine(_dir, "a", "b", "c", "nothing.exe")));
     }
 
     [Fact]

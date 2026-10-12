@@ -2,7 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:infra="clr-namespace:DBDAutoReShade.App.Infrastructure"
-        Title="DBD Auto ReShade" Height="620" Width="600" MinHeight="520" MinWidth="480">
+        Title="DBD Auto ReShade" Height="640" Width="600" MinHeight="520" MinWidth="480"
+        Style="{StaticResource AppWindow}">
     <Window.Resources>
         <infra:NullToVisibilityConverter x:Key="NullToVisibility" />
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
@@ -23,8 +24,7 @@
             <Border Background="#3A2A1A" BorderBrush="#D9A441" BorderThickness="1" CornerRadius="4"
                     Padding="8" Margin="0,0,0,6"
                     Visibility="{Binding ShowRestartNotice, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="Preset shortcuts changed. Restart Dead by Daylight so ReShade loads them."
-                           Foreground="#F2C879" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding RestartNoticeText}" Foreground="#F2C879" TextWrapping="Wrap" />
             </Border>
             <Border Background="#3A1D1B" BorderBrush="#C8322B" BorderThickness="1" CornerRadius="4"
                     Padding="8" Margin="0,0,0,6"
@@ -36,7 +36,7 @@
         <TabControl Grid.Row="2">
             <TabItem Header="Status">
                 <StackPanel Margin="6">
-                    <TextBlock Text="Press the detection hotkey to start scanning the loading screen; press it again to stop. Scanning stops by itself once the map is read."
+                    <TextBlock Text="{Binding ScanHelpText}"
                                Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6" />
                     <GroupBox Header="Match">
                         <Grid>
@@ -78,7 +78,7 @@
                                 <Button Content="Apply" Command="{Binding ApplyOverrideCommand}" />
                                 <Button Content="Return to Automatic" Command="{Binding ReturnToAutoCommand}" />
                             </StackPanel>
-                            <TextBlock Text="Override takes precedence for the current match and clears when the match ends."
+                            <TextBlock Text="{Binding OverrideHelpText}"
                                        Style="{StaticResource MutedText}" TextWrapping="Wrap" />
                         </StackPanel>
                     </GroupBox>
@@ -112,7 +112,7 @@
                                                        Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" />
                                             <Button Grid.Column="2" Content="Change" Command="{Binding SelectCommand}" />
                                             <Button Grid.Column="3" Content="Test" Command="{Binding TestCommand}" />
-                                            <Button Grid.Column="4" Content="✕" Command="{Binding ClearCommand}" ToolTip="Clear (use Global)" />
+                                            <Button Grid.Column="4" Content="✕" Command="{Binding ClearCommand}" ToolTip="{Binding ClearToolTip}" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -131,8 +131,8 @@
                                     <TextBlock Text="{Binding HotkeyText}" VerticalAlignment="Center" Width="160" FontWeight="Bold" />
                                     <Button Content="Change" Command="{Binding BeginHotkeyCaptureCommand}" />
                                 </StackPanel>
-                                <TextBlock Text="Press a key (F1–F24, A–Z, 0–9; modifiers allowed)…"
-                                           Style="{StaticResource MutedText}" Margin="0,6,0,0"
+                                <TextBlock Text="Press the new hotkey: F1–F24, or Ctrl/Alt/Shift + a letter, number or NumPad key. Esc cancels. (The current hotkey is paused meanwhile.)"
+                                           Style="{StaticResource MutedText}" Margin="0,6,0,0" TextWrapping="Wrap"
                                            Visibility="{Binding HotkeyCaptureMode, Converter={StaticResource BoolToVisibility}}" />
                             </StackPanel>
                         </GroupBox>
@@ -153,16 +153,20 @@
                         <GroupBox Header="Behavior">
                             <StackPanel>
                                 <CheckBox Content="Restore Global preset when the match ends" IsChecked="{Binding AutoRestore, Mode=TwoWay}" />
-                                <CheckBox Content="Debug Mode (save OCR crop on detection failure, local only, max 20 files)"
-                                          IsChecked="{Binding DebugMode, Mode=TwoWay}" />
+                                <CheckBox IsChecked="{Binding DebugMode, Mode=TwoWay}">
+                                    <TextBlock TextWrapping="Wrap"
+                                               Text="Debug Mode: when a scan ends without a confident read (failed or stopped), save that scan's last OCR crops and their OCR text locally to %AppData%\DBDAutoReShade\debug-crops (newest 20 sets kept)" />
+                                </CheckBox>
                             </StackPanel>
                         </GroupBox>
                         <GroupBox Header="Map Database">
                             <StackPanel>
                                 <TextBlock Text="{Binding DatabaseText}" Margin="0,0,0,6" />
-                                <TextBlock Text="Update manifest URL (HTTPS, optional — leave empty to disable):"
-                                           Style="{StaticResource MutedText}" />
+                                <TextBlock Text="Update manifest URL (must be an https:// address; leave empty to disable):"
+                                           Style="{StaticResource MutedText}" TextWrapping="Wrap" />
                                 <TextBox Text="{Binding ManifestUrl, Mode=TwoWay}" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding ManifestUrlError}" Style="{StaticResource ErrorText}" Margin="0,4,0,0"
+                                           Visibility="{Binding ManifestUrlError, Converter={StaticResource NullToVisibility}}" />
                             </StackPanel>
                         </GroupBox>
                         <GroupBox Header="ReShade Diagnostics">

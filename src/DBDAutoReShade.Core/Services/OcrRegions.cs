@@ -12,9 +12,9 @@ public readonly record struct NormalizedRegion(double X, double Y, double Width,
 /// Never hard-code absolute pixels; never assume the primary monitor.
 ///
 /// Assumption (tunable): DBD shows the map name large with the realm name
-/// beneath it in the lower-left area of the loading screen. A wider combined
-/// region is used as fallback. Only these small regions are OCR'd — never
-/// the full frame.
+/// beneath it in the lower-left area of the loading screen. Detection OCRs
+/// exactly two small regions per sample — <see cref="MapName"/> and
+/// <see cref="RealmName"/> — never the full frame.
 /// </summary>
 public static class DbdLoadingScreenRegions
 {
@@ -24,7 +24,11 @@ public static class DbdLoadingScreenRegions
     /// <summary>Expected realm-name text area (below the map name, smaller type).</summary>
     public static readonly NormalizedRegion RealmName = new(0.03, 0.84, 0.52, 0.12);
 
-    /// <summary>Wider fallback covering both lines.</summary>
+    /// <summary>
+    /// Wider rectangle covering both lines. Not OCR'd and not used by detection
+    /// or Debug Mode (which saves the map and realm crops actually OCR'd);
+    /// kept as a reference area for tuning tools.
+    /// </summary>
     public static readonly NormalizedRegion Combined = new(0.02, 0.66, 0.62, 0.30);
 
     /// <summary>Scale a normalized region to client pixels, clamped inside the client area.</summary>

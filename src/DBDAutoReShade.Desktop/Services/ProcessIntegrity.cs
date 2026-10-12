@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DBDAutoReShade.Desktop.Interop;
+using Microsoft.Win32.SafeHandles;
 
 namespace DBDAutoReShade.Desktop.Services;
 
@@ -11,7 +12,8 @@ public enum IntegrityLevel
     Low,
     Medium,
     High,
-    System
+    System,
+    Protected
 }
 
 /// <summary>
@@ -22,19 +24,21 @@ public enum IntegrityLevel
 /// </summary>
 public static class ProcessIntegrity
 {
-    // SECURITY_MANDATORY_*_RID values.
-    private const uint UntrustedRid = 0x1000;
-    private const uint LowRid = 0x2000;
-    private const uint MediumRid = 0x3000;
-    private const uint HighRid = 0x4000;
-    private const uint SystemRid = 0x5000;
+    // SECURITY_MANDATORY_*_RID values (winnt.h). MediumPlus (0x2100) sits
+    // between Medium and High and counts as Medium.
+    internal const uint UntrustedRid = 0x0000;
+    internal const uint LowRid = 0x1000;
+    internal const uint MediumRid = 0x2000;
+    internal const uint MediumPlusRid = 0x2100;
+    internal const uint HighRid = 0x3000;
+    internal const uint SystemRid = 0x4000;
+    internal const uint ProtectedRid = 0x5000;
 
     public static IntegrityLevel GetForCurrentProcess()
     {
         try
         {
-            using var process = System.Diagnostics.Process.GetCurrentProcess();
-            return GetForProcess(process.Id);
+            return GetForProcess(Environment.ProcessId);
         }
         catch
         {
@@ -49,114 +53,122 @@ public static class ProcessIntegrity
             return IntegrityLevel.Unknown;
         }
 
-        IntPtr process = IntPtr.Zero;
-        IntPtr token = IntPtr.Zero;
         try
         {
-            process = NativeMethods.OpenProcess(
+            using SafeProcessHandle process = NativeMethods.OpenProcess(
                 NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
-            if (process == IntPtr.Zero)
+            if (process.IsInvalid)
             {
                 return IntegrityLevel.Unknown;
             }
 
-            if (!NativeMethods.OpenProcessToken(process, NativeMethods.TOKEN_QUERY, out token) ||
-                token == IntPtr.Zero)
+            if (!NativeMethods.OpenProcessToken(process, NativeMethods.TOKEN_QUERY, out SafeAccessTokenHandle token))
             {
+                token.Dispose();
                 return IntegrityLevel.Unknown;
             }
 
-            uint needed = 0;
-            // First call yields the required size (fails with insufficient buffer).
-            NativeMethods.GetTokenInformation(token, NativeMethods.TokenIntegrityLevel,
-                IntPtr.Zero, 0, out needed);
-            if (needed == 0 || needed > 1024)
+            using (token)
             {
-                return IntegrityLevel.Unknown;
-            }
-
-            IntPtr buffer = Marshal.AllocHGlobal((int)needed);
-            try
-            {
-                if (!NativeMethods.GetTokenInformation(token, NativeMethods.TokenIntegrityLevel,
-                    buffer, needed, out _))
+                if (token.IsInvalid)
                 {
                     return IntegrityLevel.Unknown;
                 }
 
-                var label = Marshal.PtrToStructure<NativeMethods.TOKEN_MANDATORY_LABEL>(buffer);
-                IntPtr sid = label.Label.Sid;
-                if (sid == IntPtr.Zero)
-                {
-                    return IntegrityLevel.Unknown;
-                }
-
-                IntPtr countPtr = NativeMethods.GetSidSubAuthorityCount(sid);
-                if (countPtr == IntPtr.Zero)
-                {
-                    return IntegrityLevel.Unknown;
-                }
-
-                byte count = Marshal.ReadByte(countPtr);
-                if (count == 0)
-                {
-                    return IntegrityLevel.Unknown;
-                }
-
-                IntPtr ridPtr = NativeMethods.GetSidSubAuthority(sid, (uint)(count - 1));
-                if (ridPtr == IntPtr.Zero)
-                {
-                    return IntegrityLevel.Unknown;
-                }
-
-                uint rid = (uint)Marshal.ReadInt32(ridPtr);
-                if (rid >= SystemRid)
-                {
-                    return IntegrityLevel.System;
-                }
-
-                if (rid >= HighRid)
-                {
-                    return IntegrityLevel.High;
-                }
-
-                if (rid >= MediumRid)
-                {
-                    return IntegrityLevel.Medium;
-                }
-
-                if (rid >= LowRid)
-                {
-                    return IntegrityLevel.Low;
-                }
-
-                if (rid >= UntrustedRid)
-                {
-                    return IntegrityLevel.Untrusted;
-                }
-
-                return IntegrityLevel.Unknown;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
+                return ReadTokenIntegrity(token);
             }
         }
         catch
         {
             return IntegrityLevel.Unknown;
         }
-        finally
+    }
+
+    /// <summary>
+    /// Maps a mandatory-label RID to a level. Pure (unit-tested against the
+    /// real winnt.h values): every RID at or above a level's base value up to
+    /// the next level's base belongs to that level.
+    /// </summary>
+    internal static IntegrityLevel FromRid(uint rid)
+    {
+        if (rid >= ProtectedRid)
         {
-            if (token != IntPtr.Zero)
+            return IntegrityLevel.Protected;
+        }
+
+        if (rid >= SystemRid)
+        {
+            return IntegrityLevel.System;
+        }
+
+        if (rid >= HighRid)
+        {
+            return IntegrityLevel.High;
+        }
+
+        if (rid >= MediumRid)
+        {
+            // Includes MediumPlus (0x2100).
+            return IntegrityLevel.Medium;
+        }
+
+        if (rid >= LowRid)
+        {
+            return IntegrityLevel.Low;
+        }
+
+        return IntegrityLevel.Untrusted;
+    }
+
+    private static IntegrityLevel ReadTokenIntegrity(SafeAccessTokenHandle token)
+    {
+        // First call yields the required size (fails with insufficient buffer).
+        NativeMethods.GetTokenInformation(token, NativeMethods.TokenIntegrityLevel,
+            IntPtr.Zero, 0, out uint needed);
+        if (needed == 0 || needed > 1024)
+        {
+            return IntegrityLevel.Unknown;
+        }
+
+        IntPtr buffer = Marshal.AllocHGlobal((int)needed);
+        try
+        {
+            if (!NativeMethods.GetTokenInformation(token, NativeMethods.TokenIntegrityLevel,
+                buffer, needed, out _))
             {
-                NativeMethods.CloseHandle(token);
+                return IntegrityLevel.Unknown;
             }
 
-            if (process != IntPtr.Zero)
+            var label = Marshal.PtrToStructure<NativeMethods.TOKEN_MANDATORY_LABEL>(buffer);
+            IntPtr sid = label.Label.Sid;
+            if (sid == IntPtr.Zero)
             {
-                NativeMethods.CloseHandle(process);
+                return IntegrityLevel.Unknown;
             }
+
+            IntPtr countPtr = NativeMethods.GetSidSubAuthorityCount(sid);
+            if (countPtr == IntPtr.Zero)
+            {
+                return IntegrityLevel.Unknown;
+            }
+
+            byte count = Marshal.ReadByte(countPtr);
+            if (count == 0)
+            {
+                return IntegrityLevel.Unknown;
+            }
+
+            IntPtr ridPtr = NativeMethods.GetSidSubAuthority(sid, (uint)(count - 1));
+            if (ridPtr == IntPtr.Zero)
+            {
+                return IntegrityLevel.Unknown;
+            }
+
+            return FromRid((uint)Marshal.ReadInt32(ridPtr));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
         }
     }
 
@@ -166,6 +178,7 @@ public static class ProcessIntegrity
         IntegrityLevel.Medium => "Medium (normal user)",
         IntegrityLevel.High => "High (Administrator)",
         IntegrityLevel.System => "System",
+        IntegrityLevel.Protected => "Protected",
         IntegrityLevel.Untrusted => "Untrusted",
         _ => "unknown"
     };

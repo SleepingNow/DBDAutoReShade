@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Win32;
 
 namespace DBDAutoReShade.Desktop.Services;
@@ -13,6 +14,9 @@ public sealed record DbdLocation(string ExePath, string Source);
 public static class DbdDiscoveryService
 {
     public const string SteamAppId = "381210";
+
+    /// <summary>Default Steam install folder name (used when the app manifest has no "installdir").</summary>
+    private const string DefaultSteamInstallDir = "Dead by Daylight";
 
     private static readonly string[] RelativeExeCandidates =
     {
@@ -32,19 +36,17 @@ public static class DbdDiscoveryService
 
         foreach (string lib in SteamLibraries())
         {
-            string gameRoot = Path.Combine(lib, "steamapps", "common", "Dead by Daylight");
-            foreach (string rel in RelativeExeCandidates)
+            foreach (string gameRoot in SteamGameRoots(lib))
             {
-                string exe = Path.Combine(gameRoot, rel);
-                if (File.Exists(exe))
+                string? exe = RelativeExeCandidates
+                    .Select(rel => Path.Combine(gameRoot, rel))
+                    .FirstOrDefault(File.Exists);
+                if (exe is not null)
                 {
                     results.Add(new DbdLocation(exe, "Steam"));
                     break;
                 }
             }
-
-            // App manifest presence strengthens the match but is not required.
-            _ = File.Exists(Path.Combine(lib, "steamapps", $"appmanifest_{SteamAppId}.acf"));
         }
 
         foreach (string exe in EpicCandidates())
@@ -56,11 +58,12 @@ public static class DbdDiscoveryService
         }
 
         return results
-            .GroupBy(r => r.ExePath, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(r => NormalizePath(r.ExePath) ?? r.ExePath, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
     }
 
+    /// <summary>Steam root (registry SteamPath, else Program Files) plus every library from libraryfolders.vdf.</summary>
     internal static IEnumerable<string> SteamLibraries()
     {
         string? steamPath = null;
@@ -85,42 +88,183 @@ public static class DbdDiscoveryService
 
         if (string.IsNullOrWhiteSpace(steamPath))
         {
-            yield break;
+            return Array.Empty<string>();
         }
 
-        yield return steamPath;
-
-        // Additional libraries from libraryfolders.vdf ("path" entries).
-        string vdf = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
-        if (!File.Exists(vdf))
-        {
-            yield break;
-        }
-
-        string content;
+        string? vdfContent = null;
         try
         {
-            content = File.ReadAllText(vdf);
+            string vdf = Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
+            if (File.Exists(vdf))
+            {
+                vdfContent = File.ReadAllText(vdf);
+            }
         }
         catch
         {
-            yield break;
+            // Unreadable: the Steam root alone is still a library.
         }
 
+        return SteamLibrariesFrom(steamPath, vdfContent);
+    }
+
+    /// <summary>
+    /// The Steam root plus each existing "path" from libraryfolders.vdf,
+    /// normalized (full path, backslashes, no trailing separator) and
+    /// de-duplicated case-insensitively. The registry's SteamPath uses forward
+    /// slashes ("c:/program files (x86)/steam") while the vdf lists the same
+    /// main library with backslashes, so without normalization it appears twice.
+    /// </summary>
+    internal static IReadOnlyList<string> SteamLibrariesFrom(string steamPath, string? libraryFoldersVdf)
+    {
+        var libraries = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string path)
+        {
+            string? normalized = NormalizePath(path);
+            if (normalized is not null && seen.Add(normalized))
+            {
+                libraries.Add(normalized);
+            }
+        }
+
+        Add(steamPath);
+        if (!string.IsNullOrEmpty(libraryFoldersVdf))
+        {
+            foreach (string path in ReadVdfValues(libraryFoldersVdf, "path"))
+            {
+                if (Directory.Exists(path))
+                {
+                    Add(path);
+                }
+            }
+        }
+
+        return libraries;
+    }
+
+    /// <summary>
+    /// Candidate DBD folders inside a Steam library. When the app manifest
+    /// (appmanifest_381210.acf) exists, its "installdir" names the folder and
+    /// is tried first; the default "Dead by Daylight" folder is the fallback.
+    /// </summary>
+    internal static IEnumerable<string> SteamGameRoots(string library)
+    {
+        string steamApps = Path.Combine(library, "steamapps");
+        string? installDir = null;
+        try
+        {
+            string manifest = Path.Combine(steamApps, $"appmanifest_{SteamAppId}.acf");
+            if (File.Exists(manifest))
+            {
+                installDir = ReadVdfValues(File.ReadAllText(manifest), "installdir").FirstOrDefault();
+            }
+        }
+        catch
+        {
+            // Unreadable manifest: fall back to the default folder name.
+        }
+
+        // A single folder name only (no separators, no "." / "..").
+        bool usable = !string.IsNullOrWhiteSpace(installDir) &&
+            installDir.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
+            installDir.Trim('.').Length > 0;
+
+        var roots = new List<string>(2);
+        if (usable)
+        {
+            roots.Add(Path.Combine(steamApps, "common", installDir!));
+        }
+
+        if (!usable || !string.Equals(installDir, DefaultSteamInstallDir, StringComparison.OrdinalIgnoreCase))
+        {
+            roots.Add(Path.Combine(steamApps, "common", DefaultSteamInstallDir));
+        }
+
+        return roots;
+    }
+
+    /// <summary>
+    /// Values of every <c>"key" "value"</c> pair on its own line in a Valve
+    /// KeyValues text file (libraryfolders.vdf, appmanifest_*.acf). Keys match
+    /// case-insensitively; backslash escapes ("\\" → "\") are decoded.
+    /// </summary>
+    internal static IReadOnlyList<string> ReadVdfValues(string content, string key)
+    {
+        var values = new List<string>();
         foreach (string line in content.Split('\n'))
         {
-            int idx = line.IndexOf("\"path\"", StringComparison.OrdinalIgnoreCase);
-            if (idx < 0)
+            List<string> tokens = QuotedTokens(line);
+            if (tokens.Count >= 2 && string.Equals(tokens[0], key, StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                values.Add(tokens[1]);
+            }
+        }
+
+        return values;
+    }
+
+    private static List<string> QuotedTokens(string line)
+    {
+        var tokens = new List<string>(2);
+        int i = 0;
+        while (i < line.Length)
+        {
+            int start = line.IndexOf('"', i);
+            if (start < 0)
+            {
+                break;
             }
 
-            string rest = line.Substring(idx + 6).Trim().Trim('"', ' ', '\t', '\r');
-            string unescaped = rest.Replace("\\\\", "\\", StringComparison.Ordinal);
-            if (Directory.Exists(unescaped) && !string.Equals(unescaped, steamPath, StringComparison.OrdinalIgnoreCase))
+            var sb = new StringBuilder();
+            int j = start + 1;
+            bool closed = false;
+            for (; j < line.Length; j++)
             {
-                yield return unescaped;
+                char c = line[j];
+                if (c == '\\' && j + 1 < line.Length)
+                {
+                    sb.Append(line[++j]);
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    closed = true;
+                    break;
+                }
+
+                sb.Append(c);
             }
+
+            if (!closed)
+            {
+                break;
+            }
+
+            tokens.Add(sb.ToString());
+            i = j + 1;
+        }
+
+        return tokens;
+    }
+
+    /// <summary>Full path with native separators and no trailing separator; null when the path is invalid.</summary>
+    internal static string? NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Trim()));
+        }
+        catch
+        {
+            return null;
         }
     }
 

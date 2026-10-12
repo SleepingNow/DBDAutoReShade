@@ -1,7 +1,6 @@
 using DBDAutoReShade.App.Services;
 using DBDAutoReShade.Core.Models;
 using DBDAutoReShade.Core.Services;
-using DBDAutoReShade.Desktop.Services;
 
 namespace DBDAutoReShade.Tests;
 
@@ -9,88 +8,20 @@ namespace DBDAutoReShade.Tests;
 /// End-to-end activation flows through the real <see cref="AppController"/>:
 /// detection → pending → retry → switch, F8 recovery, exhaustion guidance.
 /// Regression tests for "map detected but preset never switches".
+/// One partial class (sequential) across several files, sharing <see cref="ControllerHarness"/>.
 /// </summary>
-public sealed class ControllerActivationTests : IDisposable
+public sealed partial class ControllerActivationTests : IDisposable
 {
-    private sealed class FakeDbdMonitor : IDbdMonitor
-    {
-        public bool IsRunning { get; set; } = true;
-        public IntPtr MainWindowHandle { get; set; } = new(0x1234);
-        public string? ExePath { get; set; }
-        public int? ProcessId { get; set; }
-#pragma warning disable CS0067 // required by IDbdMonitor; raised by production monitors
-        public event EventHandler<DbdStatusEventArgs>? StatusChanged;
-#pragma warning restore CS0067
-
-        public void RaiseStatusChanged(bool running) =>
-            StatusChanged?.Invoke(this, new DbdStatusEventArgs(running, MainWindowHandle, ExePath, ProcessId));
-        public void Start()
-        {
-        }
-
-        public void Stop()
-        {
-        }
-
-        public void Dispose()
-        {
-        }
-    }
-
-    private sealed class FakeKeys : IKeySimulator
-    {
-        public bool NextResult { get; set; } = true;
-        public int CallCount { get; private set; }
-        public bool SendShortcut(ReshadeShortcutConfig shortcut)
-        {
-            CallCount++;
-            return NextResult;
-        }
-    }
-
-    private sealed class FakeOcr : IOcrEngine
-    {
-        public string Text { get; set; } = "FRACTURED COWSHED\nCOLDWIND FARM";
-        public string Name => "Fake";
-        public bool IsAvailable => true;
-        public string? UnavailableReason => null;
-
-        public Task<IReadOnlyList<OcrTextLine>> RecognizeAsync(CapturedImage image, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<OcrTextLine>>(
-                Text.Split('\n').Select(l => new OcrTextLine(l, null)).ToList());
-    }
-
-    private sealed class FakeCapture : IWindowCaptureService
-    {
-        public CapturedImage? CaptureClientArea(IntPtr hwnd) =>
-            new(800, 200, new byte[800 * 200 * 4]);
-
-        public CapturedImage? CaptureRegion(IntPtr hwnd, IntRegion region)
-        {
-            int w = Math.Max(1, Math.Min(region.Width, 800));
-            int h = Math.Max(1, Math.Min(region.Height, 200));
-            return new CapturedImage(w, h, new byte[w * h * 4]);
-        }
-    }
-
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "dbd-ctrl-" + Guid.NewGuid().ToString("N"));
-    private readonly List<AppController> _controllers = new();
+    private readonly List<ControllerHarness> _harnesses = new();
 
     public ControllerActivationTests() => Directory.CreateDirectory(_dir);
 
     public void Dispose()
     {
-        foreach (AppController c in _controllers)
+        foreach (ControllerHarness h in _harnesses)
         {
-            try
-            {
-                c.Shutdown();
-                c.Dispose();
-            }
-            catch
-            {
-                // Best effort.
-            }
+            h.Dispose();
         }
 
         try
@@ -103,63 +34,26 @@ public sealed class ControllerActivationTests : IDisposable
         }
     }
 
-    private sealed record Harness(
-        AppController Controller,
-        RuntimeStateService States,
-        FakeDbdMonitor Dbd,
-        FakeKeys Keys,
-        FakeOcr Ocr,
-        string ColdwindIni,
-        string GlobalIni);
-
-    private Harness Create(TimeSpan retryInterval, int maxAttempts, bool withPresets = true, int verifyDelayMs = 2000)
+    private ControllerHarness Harness(ControllerHarnessOptions? options = null)
     {
-        string coldwind = Path.Combine(_dir, Guid.NewGuid() + "-Coldwind.ini");
-        string global = Path.Combine(_dir, Guid.NewGuid() + "-Global.ini");
-        File.WriteAllText(coldwind, "[General]\nTechniques=A\nTechniqueSorting=A\n");
-        File.WriteAllText(global, "[General]\nTechniques=B\nTechniqueSorting=B\n");
-        string ini = Path.Combine(_dir, Guid.NewGuid() + "-ReShade.ini");
-        File.WriteAllText(ini, "[GENERAL]\nPresetPath=" + global + "\n");
-        string configPath = Path.Combine(_dir, Guid.NewGuid() + "-config.json");
-
-        var configSvc = new AppConfigService(configPath);
-        if (withPresets)
-        {
-            configSvc.Config.GlobalPresetPath = global;
-            configSvc.Config.RealmPresets["Coldwind Farm"] = coldwind;
-        }
-
-        configSvc.Config.ReshadeIniPath = ini;
-
-        var db = new RealmDatabaseService();
-        db.LoadAsync(null).GetAwaiter().GetResult();
-
-        var states = new RuntimeStateService();
-        var dbd = new FakeDbdMonitor();
-        var hotkey = new GlobalHotkeyService();
-        var ocr = new FakeOcr();
-        var capture = new FakeCapture();
-        var detector = new DetectionOrchestrator(
-            ocr, new MapMatchingService(), db, capture,
-            new DetectionPolicy(TimeoutSeconds: 5, SampleIntervalMs: 25),
-            _ => new DbdClientBounds(0, 0, 1920, 1080, 96));
-        var lifecycle = new MatchLifecycleService(capture);
-        var keys = new FakeKeys();
-        var activator = new PresetActivationService(keys, _ => true); // focus bypass for tests
-        var controller = new AppController(
-            configSvc, db, states, dbd, hotkey, detector, lifecycle, activator,
-            new PresetDecisionService(), new ReshadeConfigurationService(),
-            activationRetryInterval: retryInterval, maxActivationAttempts: maxAttempts,
-            presetVerifyDelayMs: verifyDelayMs);
-        _controllers.Add(controller);
-        controller.Initialize();
-        return new Harness(controller, states, dbd, keys, ocr, coldwind, global);
+        ControllerHarness h = ControllerHarness.Create(_dir, options);
+        _harnesses.Add(h);
+        return h;
     }
+
+    private ControllerHarness Create(TimeSpan retryInterval, int maxAttempts, bool withPresets = true, int verifyDelayMs = 2000) =>
+        Harness(new ControllerHarnessOptions
+        {
+            RetryInterval = retryInterval,
+            MaxAttempts = maxAttempts,
+            WithPresets = withPresets,
+            VerifyDelayMs = verifyDelayMs
+        });
 
     [Fact]
     public async Task FailedActivation_CanBeRetried_ThenSucceeds()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
         Assert.Equal(AppState.Ready, h.States.State);
 
         h.Keys.NextResult = false; // e.g. game momentarily not ready
@@ -176,7 +70,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task PressingF8Again_AfterFailedActivation_StartsFreshAttempt()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
 
         h.Keys.NextResult = false;
         await h.Controller.TriggerDetectionAsync();
@@ -192,8 +86,8 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task ExhaustedAttempts_ExplainRecovery()
     {
-        Harness h = Create(TimeSpan.FromMilliseconds(50), maxAttempts: 3);
-        h.Keys.NextResult = false;
+        ControllerHarness h = Create(TimeSpan.FromMilliseconds(50), maxAttempts: 3);
+        h.Keys.NextResult = false; // rejected sends (SendBlocked) consume attempts
 
         await h.Controller.TriggerDetectionAsync();
         Assert.Equal(AppState.WaitingForGameplay, h.States.State);
@@ -219,7 +113,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task SecondPress_StopsRunningScan()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
         h.Ocr.Text = "PRESS START"; // never matches: scan runs until toggled off
 
         Task first = h.Controller.TriggerDetectionAsync();
@@ -235,7 +129,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task Scan_StopsWhenDbdExits()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
         h.Ocr.Text = "PRESS START"; // never matches
 
         Task first = h.Controller.TriggerDetectionAsync();
@@ -251,7 +145,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task UnconfiguredRealm_ActivatesGlobal()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
         h.Ocr.Text = "THE GAME"; // Gideon Meat Plant — no preset assigned
         h.Keys.NextResult = true;
 
@@ -263,7 +157,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task NothingAssigned_DoesNotPendPointlessRetries()
     {
-        Harness h = Create(TimeSpan.FromMilliseconds(50), maxAttempts: 3, withPresets: false);
+        ControllerHarness h = Create(TimeSpan.FromMilliseconds(50), maxAttempts: 3, withPresets: false);
         h.Keys.NextResult = true;
 
         await h.Controller.TriggerDetectionAsync();
@@ -278,7 +172,7 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public void LastActivation_IsRecorded()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20);
         h.Keys.NextResult = true;
         h.Controller.TestGlobalPreset();
         Assert.Contains("Global.ini", h.Controller.LastActivationText);
@@ -288,7 +182,9 @@ public sealed class ControllerActivationTests : IDisposable
     [Fact]
     public async Task SuccessfulSwitch_IsConfirmedByReshadeIni()
     {
-        Harness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20, verifyDelayMs: 50);
+        // The read-back watches ReShade.ini for the whole window (polling), so a
+        // long window only makes the test robust; it still confirms promptly.
+        ControllerHarness h = Create(TimeSpan.FromSeconds(30), maxAttempts: 20, verifyDelayMs: 10_000);
         h.Keys.NextResult = true;
 
         await h.Controller.TriggerDetectionAsync();
@@ -301,7 +197,7 @@ public sealed class ControllerActivationTests : IDisposable
         await File.WriteAllTextAsync(ini, doc.ToString());
 
         string? message = null;
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
         while (DateTime.UtcNow < deadline)
         {
             message = h.Controller.StatusMessage;

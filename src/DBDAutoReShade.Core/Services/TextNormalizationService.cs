@@ -39,7 +39,7 @@ public static class TextNormalizationService
                 // Apostrophes are dropped entirely (Campbell's → CAMPBELLS),
                 // never turned into word breaks.
             }
-            else if (char.IsWhiteSpace(c) || c == '-' || c == '_' || c == '/')
+            else if (char.IsWhiteSpace(c) || IsDash(c, cat) || c == '_' || c == '/')
             {
                 sb.Append(' ');
             }
@@ -50,6 +50,14 @@ public static class TextNormalizationService
         string[] parts = sb.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         return string.Join(' ', parts);
     }
+
+    /// <summary>
+    /// Every Unicode dash is a word break like '-': all dash punctuation (hyphen, en and
+    /// em dash, figure dash, ...) plus the minus sign U+2212, which Unicode files under
+    /// math symbols but OCR and typography use as a dash ("Police–Station").
+    /// </summary>
+    private static bool IsDash(char c, UnicodeCategory category) =>
+        category == UnicodeCategory.DashPunctuation || c == '\u2212';
 
     /// <summary>Split raw OCR output into normalized, non-trivial candidate lines.</summary>
     public static IReadOnlyList<string> SplitCandidateLines(string? ocrText)

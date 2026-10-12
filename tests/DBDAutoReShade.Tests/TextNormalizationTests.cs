@@ -17,6 +17,22 @@ public sealed class TextNormalizationTests
         Assert.Equal(expected, TextNormalizationService.Normalize(input));
     }
 
+    [Theory]
+    [InlineData("Police\u2010Station")] // hyphen
+    [InlineData("Police\u2011Station")] // non-breaking hyphen
+    [InlineData("Police\u2012Station")] // figure dash
+    [InlineData("Police\u2013Station")] // en dash
+    [InlineData("Police\u2014Station")] // em dash
+    [InlineData("Police\u2015Station")] // horizontal bar
+    [InlineData("Police\u2212Station")] // minus sign (a math symbol, not dash punctuation)
+    [InlineData("Police\uFE63Station")] // small hyphen-minus
+    [InlineData("Police\uFF0DStation")] // fullwidth hyphen-minus
+    [InlineData("Police \u2014 Station")] // spaced em dash
+    public void Normalize_UnicodeDashes_AreWordBreaks(string input)
+    {
+        Assert.Equal("POLICE STATION", TextNormalizationService.Normalize(input));
+    }
+
     [Fact]
     public void Normalize_EmptyInput_ReturnsEmpty()
     {
